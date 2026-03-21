@@ -1212,7 +1212,7 @@ function scoreAllocation_(allocationResult, parseResult, scorerConfigResultOverr
   };
 }
 
-function runRandomTrials_(trialCount) {
+function runRandomTrials_(trialCount, options) {
   const result = {
     ok: false,
     trialCount: trialCount,
@@ -1233,13 +1233,6 @@ function runRandomTrials_(trialCount) {
     return result;
   }
 
-  const candidatePools = buildAllCandidatePools_(parseResult);
-  if (candidatePools.ok !== true) {
-    result.message = "candidatePools contains errors.";
-    result.candidatePools = candidatePools;
-    return result;
-  }
-
   const scorerConfigResult = buildResolvedScorerWeights_();
   if (!scorerConfigResult.ok) {
     result.message = scorerConfigResult.message || "SCORER_CONFIG is invalid.";
@@ -1247,28 +1240,14 @@ function runRandomTrials_(trialCount) {
     return result;
   }
 
-  result.scorerConfig = scorerConfigResult;
+  const snapshot = buildComputeSnapshotFromParseResult_(parseResult, scorerConfigResult, {
+    trialCount: trialCount,
+    seed: options && Object.prototype.hasOwnProperty.call(options, "seed")
+      ? options.seed
+      : null
+  });
 
-  for (let i = 0; i < trialCount; i++) {
-    const allocationResult = allocateAllDaysRandom_(candidatePools);
-    const scoring = scoreAllocation_(allocationResult, parseResult, scorerConfigResult);
-
-    if (!scoring.ok) continue;
-
-    if (scoring.totalScore < result.bestScore) {
-      result.bestScore = scoring.totalScore;
-      result.bestAllocation = allocationResult;
-      result.bestScoring = scoring;
-    }
-  }
-
-  if (!result.bestAllocation) {
-    result.message = "No valid trial result found.";
-    return result;
-  }
-
-  result.ok = true;
-  return result;
+  return runRandomTrialsHeadless_(snapshot);
 }
 
 function debugRunRandomTrials() {

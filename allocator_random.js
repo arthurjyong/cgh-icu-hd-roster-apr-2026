@@ -1,8 +1,9 @@
-function shuffleArray_(items) {
+function shuffleArray_(items, rng) {
   const copy = items.slice();
+  const random = coerceRandomGenerator_(rng);
 
   for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = random.nextInt(i + 1);
     const temp = copy[i];
     copy[i] = copy[j];
     copy[j] = temp;
@@ -11,7 +12,7 @@ function shuffleArray_(items) {
   return copy;
 }
 
-function pickRandomAvailableCandidate_(candidates, slotKey, allocationState) {
+function pickRandomAvailableCandidate_(candidates, slotKey, allocationState, rng) {
   if (!candidates || candidates.length === 0) return null;
 
   const available = [];
@@ -26,11 +27,11 @@ function pickRandomAvailableCandidate_(candidates, slotKey, allocationState) {
 
   if (available.length === 0) return null;
 
-  const shuffled = shuffleArray_(available);
+  const shuffled = shuffleArray_(available, rng);
   return shuffled[0];
 }
 
-function allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds) {
+function allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds, rng) {
   const slotOrder = ["MICU_CALL", "MHD_CALL", "MICU_STANDBY", "MHD_STANDBY"];
   const allocationState = {
     usedDoctorIds: {},
@@ -42,7 +43,7 @@ function allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds) {
   for (let i = 0; i < slotOrder.length; i++) {
     const slotKey = slotOrder[i];
     const candidates = dailyPools.slotPools[slotKey] || [];
-    const picked = pickRandomAvailableCandidate_(candidates, slotKey, allocationState);
+    const picked = pickRandomAvailableCandidate_(candidates, slotKey, allocationState, rng);
 
     if (picked) {
       assignments[slotKey] = picked;
@@ -62,7 +63,7 @@ function allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds) {
   };
 }
 
-function allocateAllDaysRandom_(candidatePools) {
+function allocateAllDaysRandom_(candidatePools, rng) {
   const result = {
     ok: false,
     days: [],
@@ -85,13 +86,14 @@ function allocateAllDaysRandom_(candidatePools) {
   }
 
   const days = candidatePools.days || [];
+  const random = coerceRandomGenerator_(rng);
   let totalUnfilledSlotCount = 0;
   let daysWithAnyUnfilledSlots = 0;
   let previousDayCallDoctorIds = {};
 
   for (let i = 0; i < days.length; i++) {
     const dailyPools = days[i];
-    const dailyAllocation = allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds);
+    const dailyAllocation = allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds, random);
 
     result.days.push(dailyAllocation);
     result.byDateKey[dailyAllocation.dateKey] = dailyAllocation;
