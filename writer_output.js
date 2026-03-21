@@ -53,6 +53,101 @@ function writeAllocationToSheet_(allocationResult) {
   }
 }
 
+function validateTransportTrialResultForWriteback_(transportResult) {
+  const issues = [];
+  const slotKeys = ["MICU_CALL", "MICU_STANDBY", "MHD_CALL", "MHD_STANDBY"];
+
+  if (!transportResult) {
+    issues.push("transportResult is required.");
+  }
+
+  if (!transportResult || transportResult.ok !== true) {
+    issues.push("transportResult must be ok.");
+  }
+
+  if (!transportResult || transportResult.contractVersion !== "transport_trial_result_v1") {
+    issues.push("transportResult.contractVersion must be transport_trial_result_v1.");
+  }
+
+  const bestAllocation = transportResult ? transportResult.bestAllocation : null;
+
+  if (!bestAllocation) {
+    issues.push("transportResult.bestAllocation is required for sheet writeback.");
+  } else {
+    if (bestAllocation.ok !== true) {
+      issues.push("transportResult.bestAllocation must be ok.");
+    }
+
+    if (!Array.isArray(bestAllocation.days)) {
+      issues.push("transportResult.bestAllocation.days must be an array.");
+    } else {
+      for (let i = 0; i < bestAllocation.days.length; i++) {
+        const day = bestAllocation.days[i];
+
+        if (!day || typeof day !== "object") {
+          issues.push("transportResult.bestAllocation.days[" + i + "] must be an object.");
+          continue;
+        }
+
+        if (!day.assignments || typeof day.assignments !== "object") {
+          issues.push("transportResult.bestAllocation.days[" + i + "].assignments must be an object.");
+          continue;
+        }
+
+        for (let j = 0; j < slotKeys.length; j++) {
+          const slotKey = slotKeys[j];
+
+          if (!Object.prototype.hasOwnProperty.call(day.assignments, slotKey)) {
+            issues.push(
+              "transportResult.bestAllocation.days[" + i + "].assignments." + slotKey + " is required."
+            );
+            continue;
+          }
+
+          const assigned = day.assignments[slotKey];
+
+          if (assigned !== null) {
+            if (typeof assigned !== "object") {
+              issues.push(
+                "transportResult.bestAllocation.days[" + i + "].assignments." + slotKey + " must be an object or null."
+              );
+              continue;
+            }
+
+            if (typeof assigned.fullName !== "string") {
+              issues.push(
+                "transportResult.bestAllocation.days[" + i + "].assignments." + slotKey + ".fullName must be a string."
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return issues.length > 0
+    ? {
+        ok: false,
+        message: issues[0],
+        issues: issues
+      }
+    : {
+        ok: true,
+        contractVersion: transportResult.contractVersion,
+        dayCount: bestAllocation.days.length
+      };
+}
+
+function writeTransportTrialResultToSheet_(transportResult) {
+  const validation = validateTransportTrialResultForWriteback_(transportResult);
+
+  if (validation.ok !== true) {
+    throw new Error(validation.message);
+  }
+
+  writeAllocationToSheet_(transportResult.bestAllocation);
+}
+
 function runWriteGreedyAllocationToSheet() {
   const parseResult = parseRosterSheet();
   if (parseResult.ok !== true) {
@@ -111,12 +206,23 @@ function runWriteBestRandomTrialToSheet() {
   const trialCount = 200;
   const trialResult = runRandomTrials_(trialCount);
 
-  if (!trialResult.ok) {
+  if (trialResult.ok !== true) {
     Logger.log(JSON.stringify(trialResult, null, 2));
     return;
   }
 
-  writeAllocationToSheet_(trialResult.bestAllocation);
+  const transportResult = buildTransportTrialResult_(trialResult, {
+    includeBestAllocation: true,
+    includeCandidatePoolsSummary: true,
+    includeBestScoring: false
+  });
+
+  if (transportResult.ok !== true) {
+    Logger.log(JSON.stringify(transportResult, null, 2));
+    return;
+  }
+
+  writeTransportTrialResultToSheet_(transportResult);
 
   Logger.log(JSON.stringify({
     message: "Best trial allocation written to Sheet1 rows 35-38.",
