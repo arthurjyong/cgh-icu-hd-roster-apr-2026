@@ -22,6 +22,11 @@ function buildComputeSnapshotFromParseResult_(parseResult, scorerConfigResult, o
     ? options.seed
     : null;
 
+  const calendarDays = parseResult ? (parseResult.calendarDays || []) : [];
+  const doctors = parseResult ? (parseResult.doctors || []) : [];
+  const doctorDayEntries = parseResult ? (parseResult.doctorDayEntries || {}) : {};
+  const availabilityMap = parseResult ? (parseResult.availabilityMap || {}) : {};
+
   const snapshot = {
     contractVersion: "compute_snapshot_v2",
 
@@ -31,10 +36,10 @@ function buildComputeSnapshotFromParseResult_(parseResult, scorerConfigResult, o
     },
 
     inputs: {
-      calendarDays: parseResult ? parseResult.calendarDays : [],
-      doctors: parseResult ? parseResult.doctors : [],
-      doctorDayEntries: parseResult ? parseResult.doctorDayEntries : {},
-      availabilityMap: parseResult ? parseResult.availabilityMap : {}
+      calendarDays: calendarDays,
+      doctors: doctors,
+      doctorDayEntries: doctorDayEntries,
+      availabilityMap: availabilityMap
     },
 
     scorer: {
@@ -44,11 +49,15 @@ function buildComputeSnapshotFromParseResult_(parseResult, scorerConfigResult, o
     },
 
     metadata: {
-      dateCount: parseResult && parseResult.summary ? parseResult.summary.dateCount : 0,
-      doctorCount: parseResult && parseResult.summary ? parseResult.summary.doctorCount : 0
+      dateCount: parseResult && parseResult.summary
+        ? parseResult.summary.dateCount
+        : calendarDays.length,
+      doctorCount: parseResult && parseResult.summary
+        ? parseResult.summary.doctorCount
+        : doctors.length
     },
 
-    // Legacy aliases kept temporarily so current Phase 1 runner still works.
+    // Legacy aliases kept temporarily for compatibility with any older callers.
     parseResult: parseResult,
     scorerConfig: scorerConfigResult,
     options: {
@@ -80,43 +89,24 @@ function validateComputeSnapshot_(snapshot) {
   if (!snapshot || !snapshot.inputs) {
     issues.push("snapshot.inputs is required.");
   } else {
-    if (!snapshot.inputs.calendarDays) {
-      issues.push("snapshot.inputs.calendarDays is required.");
+    if (!Array.isArray(snapshot.inputs.calendarDays)) {
+      issues.push("snapshot.inputs.calendarDays must be an array.");
     }
-    if (!snapshot.inputs.doctors) {
-      issues.push("snapshot.inputs.doctors is required.");
+    if (!Array.isArray(snapshot.inputs.doctors)) {
+      issues.push("snapshot.inputs.doctors must be an array.");
     }
-    if (!snapshot.inputs.doctorDayEntries) {
-      issues.push("snapshot.inputs.doctorDayEntries is required.");
+    if (!snapshot.inputs.doctorDayEntries || typeof snapshot.inputs.doctorDayEntries !== "object") {
+      issues.push("snapshot.inputs.doctorDayEntries must be an object.");
     }
-    if (!snapshot.inputs.availabilityMap) {
-      issues.push("snapshot.inputs.availabilityMap is required.");
+    if (!snapshot.inputs.availabilityMap || typeof snapshot.inputs.availabilityMap !== "object") {
+      issues.push("snapshot.inputs.availabilityMap must be an object.");
     }
   }
 
   if (!snapshot || !snapshot.scorer) {
     issues.push("snapshot.scorer is required.");
-  } else if (!snapshot.scorer.weights) {
-    issues.push("snapshot.scorer.weights is required.");
-  }
-
-  // Keep validating legacy aliases for now because current engine_runner.js still reads them.
-  if (!snapshot || !snapshot.parseResult) {
-    issues.push("snapshot.parseResult is required during Phase 2 compatibility mode.");
-  } else if (snapshot.parseResult.ok !== true) {
-    issues.push("snapshot.parseResult must be ok.");
-  }
-
-  if (!snapshot || !snapshot.scorerConfig) {
-    issues.push("snapshot.scorerConfig is required during Phase 2 compatibility mode.");
-  } else if (snapshot.scorerConfig.ok !== true) {
-    issues.push("snapshot.scorerConfig must be ok.");
-  }
-
-  if (!snapshot || !snapshot.options) {
-    issues.push("snapshot.options is required during Phase 2 compatibility mode.");
-  } else if (typeof snapshot.options.trialCount !== "number" || snapshot.options.trialCount < 1) {
-    issues.push("snapshot.options.trialCount must be at least 1.");
+  } else if (!snapshot.scorer.weights || typeof snapshot.scorer.weights !== "object") {
+    issues.push("snapshot.scorer.weights must be an object.");
   }
 
   if (issues.length > 0) {

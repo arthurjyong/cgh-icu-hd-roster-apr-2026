@@ -1,3 +1,35 @@
+function buildParseResultLikeFromSnapshot_(snapshot) {
+  const inputs = snapshot && snapshot.inputs ? snapshot.inputs : {};
+  const metadata = snapshot && snapshot.metadata ? snapshot.metadata : {};
+
+  return {
+    ok: true,
+    calendarDays: inputs.calendarDays || [],
+    doctors: inputs.doctors || [],
+    doctorDayEntries: inputs.doctorDayEntries || {},
+    availabilityMap: inputs.availabilityMap || {},
+    summary: {
+      dateCount: typeof metadata.dateCount === "number"
+        ? metadata.dateCount
+        : ((inputs.calendarDays || []).length),
+      doctorCount: typeof metadata.doctorCount === "number"
+        ? metadata.doctorCount
+        : ((inputs.doctors || []).length)
+    }
+  };
+}
+
+function buildScorerConfigResultLikeFromSnapshot_(snapshot) {
+  const scorer = snapshot && snapshot.scorer ? snapshot.scorer : {};
+
+  return {
+    ok: true,
+    source: scorer.source || null,
+    sheetName: scorer.sheetName || null,
+    weights: scorer.weights || null
+  };
+}
+
 function runRandomTrialsHeadless_(snapshot) {
   const result = {
     ok: false,
@@ -15,7 +47,6 @@ function runRandomTrialsHeadless_(snapshot) {
     },
 
     candidatePoolsSummary: null,
-
     bestTrial: null,
 
     // Legacy aliases kept temporarily so current callers still work unchanged.
@@ -36,9 +67,8 @@ function runRandomTrialsHeadless_(snapshot) {
     return result;
   }
 
-  // Compatibility mode for current compute internals.
-  const parseResult = snapshot.parseResult;
-  const scorerConfigResult = snapshot.scorerConfig;
+  const parseResultLike = buildParseResultLikeFromSnapshot_(snapshot);
+  const scorerConfigResultLike = buildScorerConfigResultLikeFromSnapshot_(snapshot);
   const trialCount = snapshot.trialSpec.trialCount;
   const seed = snapshot.trialSpec.seed;
 
@@ -46,7 +76,7 @@ function runRandomTrialsHeadless_(snapshot) {
   result.trialCount = trialCount;
   result.seed = seed;
 
-  const candidatePools = buildAllCandidatePools_(parseResult);
+  const candidatePools = buildAllCandidatePools_(parseResultLike);
   if (candidatePools.ok !== true) {
     result.message = "candidatePools contains errors.";
     result.candidatePools = candidatePools;
@@ -68,7 +98,7 @@ function runRandomTrialsHeadless_(snapshot) {
 
   for (let i = 0; i < trialCount; i++) {
     const allocationResult = allocateAllDaysRandom_(candidatePools, rng);
-    const scoring = scoreAllocation_(allocationResult, parseResult, scorerConfigResult);
+    const scoring = scoreAllocation_(allocationResult, parseResultLike, scorerConfigResultLike);
 
     if (!scoring.ok) {
       continue;
