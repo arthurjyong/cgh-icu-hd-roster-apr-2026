@@ -401,12 +401,27 @@ function buildScoringContext_(allocationResult, parseResult) {
   };
 }
 
-function computeUnfilledPenalty_(allocationResult) {
+function getDefaultScorerWeights_() {
+  return {
+    UNFILLED_SLOT_PENALTY_MULTIPLIER: 1000000,
+    WITHIN_SECTION_POINT_BALANCE_WEIGHT: 3,
+    GLOBAL_POINT_BALANCE_WEIGHT: 1,
+    BASE_SHORT_GAP_CALL_PENALTY: 256,
+    MAX_SOFT_GAP_DAYS: 6,
+    PRE_LEAVE_CALL_PENALTY: 300,
+    CR_CALL_REWARD: 220,
+    DUAL_ELIGIBLE_ICU_CALL_BONUS: 40,
+    STANDBY_ADJACENT_TO_CALL_PENALTY: 60,
+    STANDBY_COUNT_FAIRNESS_WEIGHT: 2
+  };
+}
+
+function computeUnfilledPenalty_(allocationResult, scorerWeights) {
   const unfilledSlotCount = allocationResult && allocationResult.summary
     ? allocationResult.summary.totalUnfilledSlotCount || 0
     : 0;
 
-  const multiplier = 1000000;
+  const multiplier = scorerWeights.UNFILLED_SLOT_PENALTY_MULTIPLIER;
   const score = unfilledSlotCount * multiplier;
 
   return {
@@ -416,7 +431,7 @@ function computeUnfilledPenalty_(allocationResult) {
   };
 }
 
-function computePointBalanceWithinSectionPenalty_(scoringContext) {
+function computePointBalanceWithinSectionPenalty_(scoringContext, scorerWeights) {
   const rows = scoringContext.doctorTimelines && scoringContext.doctorTimelines.rows
     ? scoringContext.doctorTimelines.rows
     : [];
@@ -493,7 +508,7 @@ function computePointBalanceWithinSectionPenalty_(scoringContext) {
     rawSumSquaredDeviation += sumSquaredDeviation;
   }
 
-  const weight = 3;
+  const weight = scorerWeights.WITHIN_SECTION_POINT_BALANCE_WEIGHT;
   const score = rawSumSquaredDeviation * weight;
 
   return {
@@ -505,18 +520,18 @@ function computePointBalanceWithinSectionPenalty_(scoringContext) {
   };
 }
 
-function getShortGapCallPenalty_(gapDays) {
-  const BASE_SHORT_GAP_CALL_PENALTY = 256;
-  const MAX_SOFT_GAP_DAYS = 6;
+function getShortGapCallPenalty_(gapDays, scorerWeights) {
+  const baseShortGapCallPenalty = scorerWeights.BASE_SHORT_GAP_CALL_PENALTY;
+  const maxSoftGapDays = scorerWeights.MAX_SOFT_GAP_DAYS;
 
   // gap 1 is handled as a hard invalid rule outside scorer
   if (gapDays < 2) return 0;
-  if (gapDays > MAX_SOFT_GAP_DAYS) return 0;
+  if (gapDays > maxSoftGapDays) return 0;
 
-  return BASE_SHORT_GAP_CALL_PENALTY / Math.pow(2, gapDays - 2);
+  return baseShortGapCallPenalty / Math.pow(2, gapDays - 2);
 }
 
-function computeSpacingPenalty_(scoringContext) {
+function computeSpacingPenalty_(scoringContext, scorerWeights) {
   const doctorTimelineRows = scoringContext.doctorTimelines && scoringContext.doctorTimelines.rows
     ? scoringContext.doctorTimelines.rows
     : [];
@@ -549,7 +564,7 @@ function computeSpacingPenalty_(scoringContext) {
       }
 
       const gapDays = currentCall.dateIndex - previousCall.dateIndex;
-      const penalty = getShortGapCallPenalty_(gapDays);
+      const penalty = getShortGapCallPenalty_(gapDays, scorerWeights);
 
       if (penalty <= 0) {
         continue;
@@ -588,8 +603,8 @@ function computeSpacingPenalty_(scoringContext) {
 
   return {
     ok: true,
-    basePenalty: 256,
-    maxSoftGapDays: 6,
+    basePenalty: scorerWeights.BASE_SHORT_GAP_CALL_PENALTY,
+    maxSoftGapDays: scorerWeights.MAX_SOFT_GAP_DAYS,
     shortGapCount: totalShortGapCount,
     score: totalScore,
     byDoctorId: byDoctorId,
@@ -597,12 +612,12 @@ function computeSpacingPenalty_(scoringContext) {
   };
 }
 
-function computePreLeavePenalty_(scoringContext) {
+function computePreLeavePenalty_(scoringContext, scorerWeights) {
   const doctorTimelineRows = scoringContext.doctorTimelines && scoringContext.doctorTimelines.rows
     ? scoringContext.doctorTimelines.rows
     : [];
 
-  const PRE_LEAVE_CALL_PENALTY = 300;
+  const preLeaveCallPenalty = scorerWeights.PRE_LEAVE_CALL_PENALTY;
 
   let preLeaveCount = 0;
   let totalScore = 0;
@@ -626,8 +641,8 @@ function computePreLeavePenalty_(scoringContext) {
 
       doctorPreLeaveCount += 1;
       preLeaveCount += 1;
-      doctorScore += PRE_LEAVE_CALL_PENALTY;
-      totalScore += PRE_LEAVE_CALL_PENALTY;
+      doctorScore += preLeaveCallPenalty;
+      totalScore += preLeaveCallPenalty;
 
       const occurrence = {
         doctorId: row.doctorId,
@@ -639,7 +654,7 @@ function computePreLeavePenalty_(scoringContext) {
         prevDaySoftPenaltyReasonCodes: assignment.prevDaySoftPenaltyReasonCodes
           ? assignment.prevDaySoftPenaltyReasonCodes.slice()
           : [],
-        penalty: PRE_LEAVE_CALL_PENALTY
+        penalty: preLeaveCallPenalty
       };
 
       doctorOccurrences.push(occurrence);
@@ -658,7 +673,7 @@ function computePreLeavePenalty_(scoringContext) {
 
   return {
     ok: true,
-    penaltyPerOccurrence: PRE_LEAVE_CALL_PENALTY,
+    penaltyPerOccurrence: preLeaveCallPenalty,
     preLeaveCount: preLeaveCount,
     score: totalScore,
     byDoctorId: byDoctorId,
@@ -666,12 +681,12 @@ function computePreLeavePenalty_(scoringContext) {
   };
 }
 
-function computeCrReward_(scoringContext) {
+function computeCrReward_(scoringContext, scorerWeights) {
   const doctorTimelineRows = scoringContext.doctorTimelines && scoringContext.doctorTimelines.rows
     ? scoringContext.doctorTimelines.rows
     : [];
 
-  const CR_CALL_REWARD = 220;
+  const crCallReward = scorerWeights.CR_CALL_REWARD;
 
   let satisfiedCrCallCount = 0;
   let totalScore = 0;
@@ -695,8 +710,8 @@ function computeCrReward_(scoringContext) {
 
       doctorSatisfiedCount += 1;
       satisfiedCrCallCount += 1;
-      doctorScore += CR_CALL_REWARD;
-      totalScore += CR_CALL_REWARD;
+      doctorScore += crCallReward;
+      totalScore += crCallReward;
 
       const occurrence = {
         doctorId: row.doctorId,
@@ -704,7 +719,7 @@ function computeCrReward_(scoringContext) {
         section: row.section,
         dateKey: assignment.dateKey,
         slotKey: assignment.slotKey,
-        reward: CR_CALL_REWARD,
+        reward: crCallReward,
         rawText: assignment.rawText || "",
         codes: assignment.codes ? assignment.codes.slice() : []
       };
@@ -725,7 +740,7 @@ function computeCrReward_(scoringContext) {
 
   return {
     ok: true,
-    rewardPerOccurrence: CR_CALL_REWARD,
+    rewardPerOccurrence: crCallReward,
     satisfiedCrCallCount: satisfiedCrCallCount,
     score: totalScore,
     byDoctorId: byDoctorId,
@@ -733,12 +748,12 @@ function computeCrReward_(scoringContext) {
   };
 }
 
-function computeDualEligibleIcuBonus_(scoringContext) {
+function computeDualEligibleIcuBonus_(scoringContext, scorerWeights) {
   const doctorTimelineRows = scoringContext.doctorTimelines && scoringContext.doctorTimelines.rows
     ? scoringContext.doctorTimelines.rows
     : [];
 
-  const DUAL_ELIGIBLE_ICU_CALL_BONUS = 40;
+  const dualEligibleIcuCallBonus = scorerWeights.DUAL_ELIGIBLE_ICU_CALL_BONUS;
 
   let dualEligibleIcuCallCount = 0;
   let totalScore = 0;
@@ -766,8 +781,8 @@ function computeDualEligibleIcuBonus_(scoringContext) {
 
       doctorCount += 1;
       dualEligibleIcuCallCount += 1;
-      doctorScore += DUAL_ELIGIBLE_ICU_CALL_BONUS;
-      totalScore += DUAL_ELIGIBLE_ICU_CALL_BONUS;
+      doctorScore += dualEligibleIcuCallBonus;
+      totalScore += dualEligibleIcuCallBonus;
 
       const occurrence = {
         doctorId: row.doctorId,
@@ -775,7 +790,7 @@ function computeDualEligibleIcuBonus_(scoringContext) {
         section: row.section,
         dateKey: assignment.dateKey,
         slotKey: assignment.slotKey,
-        bonus: DUAL_ELIGIBLE_ICU_CALL_BONUS
+        bonus: dualEligibleIcuCallBonus
       };
 
       doctorOccurrences.push(occurrence);
@@ -794,7 +809,7 @@ function computeDualEligibleIcuBonus_(scoringContext) {
 
   return {
     ok: true,
-    bonusPerOccurrence: DUAL_ELIGIBLE_ICU_CALL_BONUS,
+    bonusPerOccurrence: dualEligibleIcuCallBonus,
     dualEligibleIcuCallCount: dualEligibleIcuCallCount,
     score: totalScore,
     byDoctorId: byDoctorId,
@@ -802,12 +817,12 @@ function computeDualEligibleIcuBonus_(scoringContext) {
   };
 }
 
-function computeStandbyAdjacencyPenalty_(scoringContext) {
+function computeStandbyAdjacencyPenalty_(scoringContext, scorerWeights) {
   const doctorTimelineRows = scoringContext.doctorTimelines && scoringContext.doctorTimelines.rows
     ? scoringContext.doctorTimelines.rows
     : [];
 
-  const STANDBY_ADJACENT_TO_CALL_PENALTY = 60;
+  const standbyAdjacentToCallPenalty = scorerWeights.STANDBY_ADJACENT_TO_CALL_PENALTY;
 
   let adjacentPairCount = 0;
   let totalScore = 0;
@@ -844,8 +859,8 @@ function computeStandbyAdjacencyPenalty_(scoringContext) {
       if (previousCall) {
         doctorAdjacentPairCount += 1;
         adjacentPairCount += 1;
-        doctorScore += STANDBY_ADJACENT_TO_CALL_PENALTY;
-        totalScore += STANDBY_ADJACENT_TO_CALL_PENALTY;
+        doctorScore += standbyAdjacentToCallPenalty;
+        totalScore += standbyAdjacentToCallPenalty;
 
         const occurrence = {
           doctorId: row.doctorId,
@@ -856,7 +871,7 @@ function computeStandbyAdjacencyPenalty_(scoringContext) {
           callDateKey: previousCall.dateKey,
           callSlotKey: previousCall.slotKey,
           relation: "CALL_PREVIOUS_DAY",
-          penalty: STANDBY_ADJACENT_TO_CALL_PENALTY
+          penalty: standbyAdjacentToCallPenalty
         };
 
         doctorOccurrences.push(occurrence);
@@ -866,8 +881,8 @@ function computeStandbyAdjacencyPenalty_(scoringContext) {
       if (nextCall) {
         doctorAdjacentPairCount += 1;
         adjacentPairCount += 1;
-        doctorScore += STANDBY_ADJACENT_TO_CALL_PENALTY;
-        totalScore += STANDBY_ADJACENT_TO_CALL_PENALTY;
+        doctorScore += standbyAdjacentToCallPenalty;
+        totalScore += standbyAdjacentToCallPenalty;
 
         const occurrence = {
           doctorId: row.doctorId,
@@ -878,7 +893,7 @@ function computeStandbyAdjacencyPenalty_(scoringContext) {
           callDateKey: nextCall.dateKey,
           callSlotKey: nextCall.slotKey,
           relation: "CALL_NEXT_DAY",
-          penalty: STANDBY_ADJACENT_TO_CALL_PENALTY
+          penalty: standbyAdjacentToCallPenalty
         };
 
         doctorOccurrences.push(occurrence);
@@ -898,7 +913,7 @@ function computeStandbyAdjacencyPenalty_(scoringContext) {
 
   return {
     ok: true,
-    penaltyPerAdjacentPair: STANDBY_ADJACENT_TO_CALL_PENALTY,
+    penaltyPerAdjacentPair: standbyAdjacentToCallPenalty,
     adjacentPairCount: adjacentPairCount,
     score: totalScore,
     byDoctorId: byDoctorId,
@@ -906,12 +921,12 @@ function computeStandbyAdjacencyPenalty_(scoringContext) {
   };
 }
 
-function computeStandbyCountFairnessPenalty_(scoringContext) {
+function computeStandbyCountFairnessPenalty_(scoringContext, scorerWeights) {
   const doctorTimelineRows = scoringContext.doctorTimelines && scoringContext.doctorTimelines.rows
     ? scoringContext.doctorTimelines.rows
     : [];
 
-  const STANDBY_COUNT_FAIRNESS_WEIGHT = 2;
+  const standbyCountFairnessWeight = scorerWeights.STANDBY_COUNT_FAIRNESS_WEIGHT;
   const values = [];
   const byDoctorId = {};
 
@@ -957,11 +972,11 @@ function computeStandbyCountFairnessPenalty_(scoringContext) {
   const variance = rawSumSquaredDeviation / values.length;
   const standardDeviation = Math.sqrt(variance);
   const range = max - min;
-  const score = rawSumSquaredDeviation * STANDBY_COUNT_FAIRNESS_WEIGHT;
+  const score = rawSumSquaredDeviation * standbyCountFairnessWeight;
 
   return {
     ok: true,
-    weight: STANDBY_COUNT_FAIRNESS_WEIGHT,
+    weight: standbyCountFairnessWeight,
     doctorCount: values.length,
     meanStandbyCount: mean,
     minStandbyCount: min,
@@ -975,7 +990,7 @@ function computeStandbyCountFairnessPenalty_(scoringContext) {
   };
 }
 
-function computePointBalanceGlobalPenalty_(scoringContext) {
+function computePointBalanceGlobalPenalty_(scoringContext, scorerWeights) {
   const rows = scoringContext.pointTotals.rows || [];
   const values = [];
 
@@ -1013,10 +1028,14 @@ function computePointBalanceGlobalPenalty_(scoringContext) {
   const variance = sumSquaredDeviation / values.length;
   const standardDeviation = Math.sqrt(variance);
   const range = max - min;
+  const weight = scorerWeights.GLOBAL_POINT_BALANCE_WEIGHT;
+  const score = sumSquaredDeviation * weight;
 
   return {
     ok: true,
-    score: sumSquaredDeviation,
+    weight: weight,
+    score: score,
+    rawSumSquaredDeviation: sumSquaredDeviation,
     doctorCount: values.length,
     meanPoints: mean,
     minPoints: min,
@@ -1038,16 +1057,28 @@ function scoreAllocation_(allocationResult, parseResult) {
     };
   }
 
+  const scorerConfigResult = buildResolvedScorerWeights_();
+  if (!scorerConfigResult.ok) {
+    return {
+      ok: false,
+      totalScore: Number.POSITIVE_INFINITY,
+      message: scorerConfigResult.message || "SCORER_CONFIG is invalid.",
+      contractVersion: 2,
+      scorerConfig: scorerConfigResult
+    };
+  }
+
+  const scorerWeights = scorerConfigResult.weights;
   const scoringContext = buildScoringContext_(allocationResult, parseResult);
-  const unfilledPenalty = computeUnfilledPenalty_(allocationResult);
-  const pointBalanceWithinSection = computePointBalanceWithinSectionPenalty_(scoringContext);
-  const pointBalanceGlobal = computePointBalanceGlobalPenalty_(scoringContext);
-  const spacingPenalty = computeSpacingPenalty_(scoringContext);
-  const preLeavePenalty = computePreLeavePenalty_(scoringContext);
-  const crReward = computeCrReward_(scoringContext);
-  const dualEligibleIcuBonus = computeDualEligibleIcuBonus_(scoringContext);
-  const standbyAdjacencyPenalty = computeStandbyAdjacencyPenalty_(scoringContext);
-  const standbyCountFairnessPenalty = computeStandbyCountFairnessPenalty_(scoringContext);
+  const unfilledPenalty = computeUnfilledPenalty_(allocationResult, scorerWeights);
+  const pointBalanceWithinSection = computePointBalanceWithinSectionPenalty_(scoringContext, scorerWeights);
+  const pointBalanceGlobal = computePointBalanceGlobalPenalty_(scoringContext, scorerWeights);
+  const spacingPenalty = computeSpacingPenalty_(scoringContext, scorerWeights);
+  const preLeavePenalty = computePreLeavePenalty_(scoringContext, scorerWeights);
+  const crReward = computeCrReward_(scoringContext, scorerWeights);
+  const dualEligibleIcuBonus = computeDualEligibleIcuBonus_(scoringContext, scorerWeights);
+  const standbyAdjacencyPenalty = computeStandbyAdjacencyPenalty_(scoringContext, scorerWeights);
+  const standbyCountFairnessPenalty = computeStandbyCountFairnessPenalty_(scoringContext, scorerWeights);
   const standbyTotals = buildStandbyTotalsSummary_(scoringContext.doctorTimelines.rows);
   const crSatisfiedCounts = buildCrSatisfiedCountsSummary_(scoringContext.doctorTimelines.rows);
 
@@ -1056,7 +1087,8 @@ function scoreAllocation_(allocationResult, parseResult) {
       ok: false,
       totalScore: Number.POSITIVE_INFINITY,
       message: pointBalanceGlobal.message,
-      contractVersion: 2
+      contractVersion: 2,
+      scorerConfig: scorerConfigResult
     };
   }
 
@@ -1065,7 +1097,8 @@ function scoreAllocation_(allocationResult, parseResult) {
       ok: false,
       totalScore: Number.POSITIVE_INFINITY,
       message: pointBalanceWithinSection.message || "Within-section balance scoring failed.",
-      contractVersion: 2
+      contractVersion: 2,
+      scorerConfig: scorerConfigResult
     };
   }
 
@@ -1074,7 +1107,8 @@ function scoreAllocation_(allocationResult, parseResult) {
       ok: false,
       totalScore: Number.POSITIVE_INFINITY,
       message: spacingPenalty.message || "Spacing scoring failed.",
-      contractVersion: 2
+      contractVersion: 2,
+      scorerConfig: scorerConfigResult
     };
   }
 
@@ -1083,7 +1117,8 @@ function scoreAllocation_(allocationResult, parseResult) {
       ok: false,
       totalScore: Number.POSITIVE_INFINITY,
       message: preLeavePenalty.message || "Pre-leave scoring failed.",
-      contractVersion: 2
+      contractVersion: 2,
+      scorerConfig: scorerConfigResult
     };
   }
 
@@ -1092,7 +1127,8 @@ function scoreAllocation_(allocationResult, parseResult) {
       ok: false,
       totalScore: Number.POSITIVE_INFINITY,
       message: crReward.message || "CR reward scoring failed.",
-      contractVersion: 2
+      contractVersion: 2,
+      scorerConfig: scorerConfigResult
     };
   }
 
@@ -1101,7 +1137,8 @@ function scoreAllocation_(allocationResult, parseResult) {
       ok: false,
       totalScore: Number.POSITIVE_INFINITY,
       message: dualEligibleIcuBonus.message || "Dual-eligible ICU bonus scoring failed.",
-      contractVersion: 2
+      contractVersion: 2,
+      scorerConfig: scorerConfigResult
     };
   }
 
@@ -1110,7 +1147,8 @@ function scoreAllocation_(allocationResult, parseResult) {
       ok: false,
       totalScore: Number.POSITIVE_INFINITY,
       message: standbyAdjacencyPenalty.message || "Standby adjacency scoring failed.",
-      contractVersion: 2
+      contractVersion: 2,
+      scorerConfig: scorerConfigResult
     };
   }
 
@@ -1119,7 +1157,8 @@ function scoreAllocation_(allocationResult, parseResult) {
       ok: false,
       totalScore: Number.POSITIVE_INFINITY,
       message: standbyCountFairnessPenalty.message || "Standby fairness scoring failed.",
-      contractVersion: 2
+      contractVersion: 2,
+      scorerConfig: scorerConfigResult
     };
   }
 
@@ -1138,6 +1177,8 @@ function scoreAllocation_(allocationResult, parseResult) {
     ok: true,
     contractVersion: 2,
     totalScore: totalScore,
+    scorerWeights: scorerWeights,
+    scorerConfig: scorerConfigResult,
 
     components: {
       unfilledPenalty: unfilledPenalty,
