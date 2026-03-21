@@ -30,6 +30,83 @@ function buildScorerConfigResultLikeFromSnapshot_(snapshot) {
   };
 }
 
+function buildTransportTrialResult_(headlessResult, options) {
+  const transportContractVersion = "transport_trial_result_v1";
+  const includeCandidatePoolsSummary = !(options && options.includeCandidatePoolsSummary === false);
+  const includeBestAllocation = !!(options && options.includeBestAllocation);
+  const includeBestScoring = !!(options && options.includeBestScoring);
+
+  if (!headlessResult) {
+    return {
+      ok: false,
+      contractVersion: transportContractVersion,
+      message: "headlessResult is required."
+    };
+  }
+
+  if (headlessResult.ok !== true) {
+    return {
+      ok: false,
+      contractVersion: transportContractVersion,
+      sourceContractVersion: headlessResult.contractVersion || null,
+      message: headlessResult.message || "headlessResult is not ok."
+    };
+  }
+
+  const trialSpec = headlessResult.trialSpec || {
+    trialCount: headlessResult.trialCount,
+    seed: headlessResult.seed
+  };
+
+  const rng = headlessResult.rng || {
+    kind: headlessResult.rngKind,
+    normalizedSeed: headlessResult.normalizedSeed
+  };
+
+  const bestTrial = headlessResult.bestTrial || {
+    index: headlessResult.bestTrialIndex,
+    score: headlessResult.bestScore,
+    allocationSummary: headlessResult.bestAllocation
+      ? (headlessResult.bestAllocation.summary || null)
+      : null,
+    scoringSummary: headlessResult.bestScoring
+      ? {
+          contractVersion: headlessResult.bestScoring.contractVersion || null,
+          totalScore: headlessResult.bestScoring.totalScore,
+          meanPoints: headlessResult.bestScoring.meanPoints,
+          standardDeviation: headlessResult.bestScoring.standardDeviation,
+          minPoints: headlessResult.bestScoring.minPoints,
+          maxPoints: headlessResult.bestScoring.maxPoints,
+          range: headlessResult.bestScoring.range,
+          componentScores: headlessResult.bestScoring.componentScores || null
+        }
+      : null
+  };
+
+  const transportResult = {
+    ok: true,
+    contractVersion: transportContractVersion,
+    sourceContractVersion: headlessResult.contractVersion || null,
+    snapshotContractVersion: headlessResult.snapshotContractVersion || null,
+    trialSpec: trialSpec,
+    rng: rng,
+    candidatePoolsSummary: includeCandidatePoolsSummary
+      ? (headlessResult.candidatePoolsSummary || null)
+      : null,
+    bestTrial: bestTrial
+  };
+
+  if (includeBestAllocation) {
+    transportResult.bestAllocation = headlessResult.bestAllocation || null;
+  }
+
+  if (includeBestScoring) {
+    transportResult.bestScoring = headlessResult.bestScoring || null;
+  }
+
+  return transportResult;
+}
+
 function runRandomTrialsHeadless_(snapshot) {
   const result = {
     ok: false,
@@ -50,8 +127,8 @@ function runRandomTrialsHeadless_(snapshot) {
     bestTrial: null,
 
     // Legacy aliases kept temporarily so current callers still work unchanged.
-    trialCount: snapshot && snapshot.options ? snapshot.options.trialCount : null,
-    seed: snapshot && snapshot.options ? snapshot.options.seed : null,
+    trialCount: snapshot && snapshot.trialSpec ? snapshot.trialSpec.trialCount : null,
+    seed: snapshot && snapshot.trialSpec ? snapshot.trialSpec.seed : null,
     normalizedSeed: null,
     rngKind: null,
     bestScore: Number.POSITIVE_INFINITY,
@@ -72,7 +149,6 @@ function runRandomTrialsHeadless_(snapshot) {
   const trialCount = snapshot.trialSpec.trialCount;
   const seed = snapshot.trialSpec.seed;
 
-  // Keep legacy aliases in sync.
   result.trialCount = trialCount;
   result.seed = seed;
 

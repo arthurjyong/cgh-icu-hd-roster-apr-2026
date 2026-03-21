@@ -1388,3 +1388,16 @@ function debugRunRandomTrials() {
     pointTotalsDescending: totalsList
   }, null, 2));
 }
+
+function debugTransportTrialResult() {
+  const headlessResult = runRandomTrials_(200, { seed: 12345 });
+
+  if (!headlessResult.ok) {
+    Logger.log(JSON.stringify(headlessResult, null, 2));
+    return;
+  }
+
+  const transportResult = buildTransportTrialResult_(headlessResult);
+
+  Logger.log(JSON.stringify(transportResult, null, 2));
+}
