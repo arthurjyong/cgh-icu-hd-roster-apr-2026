@@ -317,7 +317,6 @@ function benchmarkTrialCounts_(trialCounts, repeats, batchLabel) {
     throw new Error("repeats must be at least 1.");
   }
 
-  const rowsToAppend = [];
   const label = batchLabel || "BENCH";
 
   for (let i = 0; i < trialCounts.length; i++) {
@@ -328,9 +327,8 @@ function benchmarkTrialCounts_(trialCounts, repeats, batchLabel) {
       const trialResult = runRandomTrials_(trialCount);
       const runtimeMs = Date.now() - startedAt;
 
-      rowsToAppend.push(
-        buildBenchmarkRow_(label, trialCount, repeatIndex, runtimeMs, trialResult)
-      );
+      const row = buildBenchmarkRow_(label, trialCount, repeatIndex, runtimeMs, trialResult);
+      appendBenchmarkRows_([row]);
 
       Logger.log(JSON.stringify({
         batchLabel: label,
@@ -342,7 +340,18 @@ function benchmarkTrialCounts_(trialCounts, repeats, batchLabel) {
         message: trialResult.ok ? "" : (trialResult.message || "Unknown failure")
       }, null, 2));
     }
+
+    // Refresh summary after each trial-count block, not only at the very end.
+    refreshBenchmarkSummarySheet();
   }
+
+  Logger.log(JSON.stringify({
+    ok: true,
+    batchLabel: label,
+    trialCounts: trialCounts,
+    repeats: repeats
+  }, null, 2));
+}
 
   appendBenchmarkRows_(rowsToAppend);
   refreshBenchmarkSummarySheet();
@@ -356,6 +365,18 @@ function benchmarkTrialCounts_(trialCounts, repeats, batchLabel) {
   }, null, 2));
 }
 
-function benchmarkTrialCountsAll() {
-  benchmarkTrialCounts_([1, 10, 100, 500, 1000, 5000, 10000, 50000, 100000, 500000], 3, "ALL");
+function benchmarkTrialCountsFocused() {
+  benchmarkTrialCounts_([500, 1000, 2000, 5000, 10000], 10, "FOCUSED");
+}
+
+function benchmarkTrialCountsHighSingle() {
+  benchmarkTrialCounts_([20000, 50000], 5, "HIGH_SINGLE");
+}
+
+function benchmarkTrialCountsVeryHigh100k() {
+  benchmarkTrialCounts_([100000], 3, "VERY_HIGH_100K");
+}
+
+function benchmarkTrialCountsUltra500kSingle() {
+  benchmarkTrialCounts_([500000], 1, "ULTRA_500K");
 }
