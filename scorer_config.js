@@ -526,22 +526,25 @@ function buildScorerConfigValidationFormula_(rowNumber, definition) {
   return '=ISNUMBER(' + cellRef + ')';
 }
 
-function applyScorerConfigDataValidation_(sheet) {
-  const definitions = getScorerConfigDefinitions_();
-  const startRow = getScorerConfigDataStartRow_();
+function applyScorerConfigProtection_(sheet) {
+  removeExistingScorerConfigProtections_(sheet);
 
-  for (let i = 0; i < definitions.length; i++) {
-    const rowNumber = startRow + i;
-    const definition = definitions[i];
-    const range = sheet.getRange(rowNumber, getScorerConfigValueColumnIndex_());
-    const formula = buildScorerConfigValidationFormula_(rowNumber, definition);
+  const protection = sheet.protect()
+    .setDescription("SCORER_CONFIG except B3:B12");
 
-    const rule = SpreadsheetApp.newDataValidation()
-      .requireFormulaSatisfied(formula)
-      .setAllowInvalid(false)
-      .build();
+  protection.setWarningOnly(false);
+  protection.setUnprotectedRanges([getScorerConfigValueRange_(sheet)]);
 
-    range.setDataValidation(rule);
+  // Follow Google's owner-only pattern for protected sheets.
+  const me = Session.getEffectiveUser();
+  protection.addEditor(me);
+  protection.removeEditors(protection.getEditors());
+
+  // Re-add self explicitly after removal.
+  protection.addEditor(me);
+
+  if (protection.canDomainEdit()) {
+    protection.setDomainEdit(false);
   }
 }
 
