@@ -526,6 +526,38 @@ function buildScorerConfigValidationFormula_(rowNumber, definition) {
   return '=ISNUMBER(' + cellRef + ')';
 }
 
+function applyScorerConfigDataValidation_(sheet) {
+  const definitions = getScorerConfigDefinitions_();
+  const startRow = getScorerConfigDataStartRow_();
+
+  for (let i = 0; i < definitions.length; i++) {
+    const rowNumber = startRow + i;
+    const definition = definitions[i];
+    const range = sheet.getRange(rowNumber, getScorerConfigValueColumnIndex_());
+    const formula = buildScorerConfigValidationFormula_(rowNumber, definition);
+
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireFormulaSatisfied(formula)
+      .setAllowInvalid(false)
+      .build();
+
+    range.setDataValidation(rule);
+  }
+}
+
+function removeExistingScorerConfigProtections_(sheet) {
+  const sheetProtections = SpreadsheetApp.getActive().getProtections(SpreadsheetApp.ProtectionType.SHEET);
+
+  for (let i = 0; i < sheetProtections.length; i++) {
+    const protection = sheetProtections[i];
+    const protectedSheet = protection.getRange ? protection.getRange() : null;
+
+    if (protection.getSheet && protection.getSheet() && protection.getSheet().getSheetId() === sheet.getSheetId()) {
+      protection.remove();
+    }
+  }
+}
+
 function applyScorerConfigProtection_(sheet) {
   removeExistingScorerConfigProtections_(sheet);
 
@@ -546,28 +578,6 @@ function applyScorerConfigProtection_(sheet) {
   if (protection.canDomainEdit()) {
     protection.setDomainEdit(false);
   }
-}
-
-function removeExistingScorerConfigProtections_(sheet) {
-  const sheetProtections = SpreadsheetApp.getActive().getProtections(SpreadsheetApp.ProtectionType.SHEET);
-
-  for (let i = 0; i < sheetProtections.length; i++) {
-    const protection = sheetProtections[i];
-    const protectedSheet = protection.getRange ? protection.getRange() : null;
-
-    if (protection.getSheet && protection.getSheet() && protection.getSheet().getSheetId() === sheet.getSheetId()) {
-      protection.remove();
-    }
-  }
-}
-
-function applyScorerConfigProtection_(sheet) {
-  removeExistingScorerConfigProtections_(sheet);
-
-  const protection = sheet.protect();
-  protection.setDescription("Protect SCORER_CONFIG structure; allow editing of Value cells only.");
-  protection.setWarningOnly(false);
-  protection.setUnprotectedRanges([getScorerConfigValueRange_(sheet)]);
 }
 
 function initializeScorerConfigSheet_() {
