@@ -353,6 +353,18 @@ function benchmarkTrialCounts_(trialCounts, repeats, batchLabel) {
   }, null, 2));
 }
 
-function benchmarkTrialCountsAll() {
-  benchmarkTrialCounts_([1, 10, 100, 500, 1000, 5000, 10000, 50000, 100000, 500000], 3, "ALL");
+function benchmarkTrialCountsFocused() {
+  benchmarkTrialCounts_([500, 1000, 2000, 5000, 10000], 10, "FOCUSED");
+}
+
+function benchmarkTrialCountsHighSingle() {
+  benchmarkTrialCounts_([20000, 50000], 5, "HIGH_SINGLE");
+}
+
+function benchmarkTrialCountsVeryHigh100k() {
+  benchmarkTrialCounts_([100000], 3, "VERY_HIGH_100K");
+}
+
+function benchmarkTrialCountsUltra500kSingle() {
+  benchmarkTrialCounts_([500000], 1, "ULTRA_500K");
 }
