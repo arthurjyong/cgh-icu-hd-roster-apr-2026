@@ -41,9 +41,12 @@ function getBenchmarkSummaryHeader_() {
     "TrialCount",
     "RunCount",
     "MinBestScore",
+    "P25BestScore",
     "MedianBestScore",
     "AverageBestScore",
+    "P75BestScore",
     "MaxBestScore",
+    "ScoreStdDev",
     "AverageRuntimeSec",
     "MinRuntimeSec",
     "MaxRuntimeSec"
@@ -178,6 +181,34 @@ function computeMedian_(values) {
   return (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+function computePercentile_(values, percentile) {
+  if (!values || values.length === 0) return "";
+  const sorted = sortNumberListAscending_(values);
+  const index = (sorted.length - 1) * percentile;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+
+  if (lower === upper) {
+    return sorted[lower];
+  }
+
+  const weight = index - lower;
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+}
+
+function computeStandardDeviation_(values) {
+  if (!values || values.length === 0) return "";
+  const mean = computeAverage_(values);
+  let sumSquaredDeviation = 0;
+
+  for (let i = 0; i < values.length; i++) {
+    const diff = values[i] - mean;
+    sumSquaredDeviation += diff * diff;
+  }
+
+  return Math.sqrt(sumSquaredDeviation / values.length);
+}
+
 function buildBenchmarkSummaryRows_() {
   const trialsSheet = ensureBenchmarkTrialsSheet_();
   const lastRow = trialsSheet.getLastRow();
@@ -241,9 +272,12 @@ function buildBenchmarkSummaryRows_() {
       group.trialCount,
       group.scores.length,
       sortedScores.length ? sortedScores[0] : "",
+      computePercentile_(sortedScores, 0.25),
       computeMedian_(sortedScores),
       computeAverage_(sortedScores),
+      computePercentile_(sortedScores, 0.75),
       sortedScores.length ? sortedScores[sortedScores.length - 1] : "",
+      computeStandardDeviation_(sortedScores),
       computeAverage_(sortedRuntimes),
       sortedRuntimes.length ? sortedRuntimes[0] : "",
       sortedRuntimes.length ? sortedRuntimes[sortedRuntimes.length - 1] : ""
@@ -322,18 +356,6 @@ function benchmarkTrialCounts_(trialCounts, repeats, batchLabel) {
   }, null, 2));
 }
 
-function benchmarkTrialCountsLow() {
-  benchmarkTrialCounts_([1, 10, 100, 500, 1000], 5, "LOW");
-}
-
-function benchmarkTrialCountsMedium() {
-  benchmarkTrialCounts_([2000, 5000], 3, "MEDIUM");
-}
-
-function benchmarkTrialCountsHigh() {
-  benchmarkTrialCounts_([10000], 2, "HIGH");
-}
-
 function benchmarkTrialCountsAll() {
-  benchmarkTrialCounts_([1, 10, 100, 500, 1000, 2000, 5000, 10000], 3, "ALL");
+  benchmarkTrialCounts_([1, 10, 100, 500, 1000, 5000, 10000, 50000, 100000, 500000], 3, "ALL");
 }
