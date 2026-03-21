@@ -55,14 +55,6 @@ function buildComputeSnapshotFromParseResult_(parseResult, scorerConfigResult, o
       doctorCount: parseResult && parseResult.summary
         ? parseResult.summary.doctorCount
         : doctors.length
-    },
-
-    // Legacy aliases kept temporarily for compatibility with any older callers.
-    parseResult: parseResult,
-    scorerConfig: scorerConfigResult,
-    options: {
-      trialCount: trialCount,
-      seed: seed
     }
   };
 
@@ -109,18 +101,16 @@ function validateComputeSnapshot_(snapshot) {
     issues.push("snapshot.scorer.weights must be an object.");
   }
 
-  if (issues.length > 0) {
-    return {
-      ok: false,
-      message: issues[0],
-      issues: issues
-    };
-  }
-
-  return {
-    ok: true,
-    contractVersion: snapshot.contractVersion,
-    trialCount: snapshot.trialSpec.trialCount,
-    seed: snapshot.trialSpec.seed
-  };
+  return issues.length > 0
+    ? {
+        ok: false,
+        message: issues[0],
+        issues: issues
+      }
+    : {
+        ok: true,
+        contractVersion: snapshot.contractVersion,
+        trialCount: snapshot.trialSpec.trialCount,
+        seed: snapshot.trialSpec.seed
+      };
 }
