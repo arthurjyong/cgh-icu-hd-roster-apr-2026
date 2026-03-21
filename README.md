@@ -12,7 +12,12 @@ Current state:
 - allocator validity layer implemented
 - greedy allocator implemented
 - random trial allocator implemented
+- seeded RNG implemented for reproducible random trials
 - scorer implemented, with sheet-driven weight configuration
+- explicit compute snapshot contract implemented
+- explicit headless trial result contract implemented
+- transport-friendly trial result helper implemented
+- Apps Script-side transport-result writeback validation implemented
 - output writer implemented
 - benchmark helpers implemented
 
@@ -51,18 +56,68 @@ Google Sheets is the user-facing control panel.
 Apps Script currently handles:
 - reading live sheet data
 - parsing doctors, dates, requests, and rule effects
-- building candidate pools
-- generating trial rosters
-- scoring rosters
+- resolving scorer configuration from code defaults plus optional sheet overrides
+- building a normalized compute snapshot
+- invoking headless compute locally inside Apps Script today
+- validating transport-friendly trial results before sheet writeback
 - writing the best result back to the sheet
 
-The codebase is intentionally structured in layers so the heavy allocation/scoring path can later be extracted into a headless compute engine if deeper brute-force search is needed.
+Headless compute currently handles:
+- consuming the normalized compute snapshot
+- building candidate pools
+- running repeated random trials
+- scoring trials
+- returning the best result
+
+The codebase is intentionally structured in layers so the heavy allocation/scoring path can later be executed outside Apps Script without redesigning roster rules or moving sheet read/write into the compute engine.
+
+## Current compute contracts
+
+The current contract boundary is already explicit.
+
+### Input snapshot contract
+
+Current input contract:
+- `compute_snapshot_v2`
+
+Top-level fields:
+- `contractVersion`
+- `trialSpec`
+- `inputs`
+- `scorer`
+- `metadata`
+
+Current intent:
+- Apps Script builds this snapshot from parsed sheet data plus resolved scorer config
+- headless compute consumes this snapshot as its normalized input
+
+### Headless compute result contract
+
+Current internal headless result contract:
+- `headless_random_trials_result_v2`
+
+This is the full internal result shape returned by the headless trial runner.
+
+### Transport-friendly result contract
+
+Current transport/helper result contract:
+- `transport_trial_result_v1`
+
+This is the leaner result shape intended for future external handoff.
+
+Current intent:
+- future external request boundary = `compute_snapshot_v2`
+- future external response boundary = `transport_trial_result_v1`
+
+Current operational note:
+- sheet writeback still requires `bestAllocation` to be included in the transport result
+- this is intentional for now to preserve the existing writer and keep diffs small
 
 ## Project structure
 
 Current source files are organized roughly as follows:
 
-- `parser_*.js` — read and parse sheet data, doctors, calendar, requests, effects, and issues
+- `parser_*.js` — read and parse sheet data, doctors, calendar, requests, effects, config, debug, and issues
 - `allocator_candidates.js` — build candidate pools
 - `allocator_rules.js` — enforce allocation validity rules
 - `allocator_greedy.js` — greedy allocation path
@@ -70,7 +125,10 @@ Current source files are organized roughly as follows:
 - `allocator_main.js` — allocator orchestration helpers
 - `scorer_main.js` — score candidate rosters
 - `scorer_config.js` — resolve scorer weights from code defaults plus optional sheet overrides
-- `writer_output.js` — write output back to Google Sheets
+- `rng_seeded.js` — seeded RNG utilities for reproducible random trials
+- `engine_snapshot.js` — build and validate normalized compute snapshots
+- `engine_runner.js` — headless random-trial runner and transport-result helpers
+- `writer_output.js` — write output back to Google Sheets and validate transport results before writeback
 - `benchmark_trials.js` — benchmark repeated trial counts
 - `Code.js` — top-level Apps Script entry points
 - `appsscript.json` — Apps Script manifest
@@ -224,6 +282,7 @@ Useful entry points and helpers include:
 - `setupScorerConfigSheet()` — create or refresh the config tab
 - `debugReadResolvedScorerWeights()` — inspect the currently resolved scorer weights
 - `debugRunRandomTrials()` — run allocation and scoring without writing output
+- `debugTransportTrialResult()` — inspect the transport-friendly result shape
 - `runWriteBestRandomTrialToSheet()` — run allocation and write the best result back to the sheet
 
 ## Current scaling reality
@@ -235,7 +294,7 @@ That is operationally useful, but Apps Script runtime becomes the bottleneck onc
 So the current position is:
 - Apps Script is good enough for practical in-sheet runs
 - deeper brute-force search likely needs external batch compute
-- the next likely direction is extraction of a headless compute engine that can later run outside Apps Script
+- the current codebase is already being prepared for future external execution through explicit snapshot and result contracts
 
 ## Planned compute-separation direction
 
@@ -244,8 +303,9 @@ The intended migration path is incremental, not a rewrite.
 Likely direction:
 - Google Sheets remains the UI
 - Apps Script remains the sheet-side controller/orchestrator
+- Apps Script continues to read the sheet, parse input, resolve scorer config, build snapshots, validate results, and write output
 - heavy random-trial computation moves to a headless worker only when needed
-- the compute engine becomes reusable pure JavaScript with minimal or no `SpreadsheetApp` dependency in the hot path
+- the compute engine remains reusable pure JavaScript with minimal or no `SpreadsheetApp` dependency in the hot path
 - future cloud execution may use a batch-worker pattern such as Cloud Run Jobs
 
 This is a planned direction, not yet a full migration.
@@ -262,9 +322,8 @@ This is a planned direction, not yet a full migration.
 ## Near-term priorities
 
 Planned next improvements include:
-- cleaner separation between sheet-facing code and pure compute logic
-- deterministic / seedable randomness for reproducibility
-- explicit JSON snapshot/result contracts for headless execution
+- tighter local validation of the future external request/response seam
 - clearer reporting of allocation failures and trial outcomes
 - further scorer tuning based on operational feedback
 - optional external batch compute for very large trial counts
+- keeping migration steps incremental and compatible with the current GitHub + clasp workflow
