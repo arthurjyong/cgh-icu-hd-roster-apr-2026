@@ -1212,13 +1212,13 @@ function scoreAllocation_(allocationResult, parseResult, scorerConfigResultOverr
   };
 }
 
-function runRandomTrials_(trialCount, options) {
+function prepareRandomTrialsSnapshot_(trialCount, options) {
   const result = {
     ok: false,
     trialCount: trialCount,
-    bestScore: Number.POSITIVE_INFINITY,
-    bestAllocation: null,
-    bestScoring: null
+    snapshot: null,
+    parseResult: null,
+    scorerConfig: null
   };
 
   if (!trialCount || trialCount < 1) {
@@ -1240,14 +1240,26 @@ function runRandomTrials_(trialCount, options) {
     return result;
   }
 
-  const snapshot = buildComputeSnapshotFromParseResult_(parseResult, scorerConfigResult, {
+  result.parseResult = parseResult;
+  result.scorerConfig = scorerConfigResult;
+  result.snapshot = buildComputeSnapshotFromParseResult_(parseResult, scorerConfigResult, {
     trialCount: trialCount,
     seed: options && Object.prototype.hasOwnProperty.call(options, "seed")
       ? options.seed
       : null
   });
 
-  return runRandomTrialsHeadless_(snapshot);
+  result.ok = true;
+  return result;
+}
+
+function runRandomTrials_(trialCount, options) {
+  const prepared = prepareRandomTrialsSnapshot_(trialCount, options);
+  if (!prepared.ok) {
+    return prepared;
+  }
+
+  return runRandomTrialsHeadless_(prepared.snapshot);
 }
 
 function debugRunRandomTrials() {

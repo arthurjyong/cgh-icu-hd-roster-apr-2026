@@ -204,14 +204,15 @@ function runWriteRandomAllocationToSheet() {
 
 function runWriteBestRandomTrialToSheet() {
   const trialCount = 200;
-  const trialResult = runRandomTrials_(trialCount);
+  const prepared = prepareRandomTrialsSnapshot_(trialCount);
 
-  if (trialResult.ok !== true) {
-    Logger.log(JSON.stringify(trialResult, null, 2));
+  if (prepared.ok !== true) {
+    Logger.log(JSON.stringify(prepared, null, 2));
     return;
   }
 
-  const transportResult = buildTransportTrialResult_(trialResult, {
+  const transportResult = invokeTrialCompute_(prepared.snapshot, {
+    mode: "LOCAL_SIMULATED_EXTERNAL",
     includeBestAllocation: true,
     includeCandidatePoolsSummary: true,
     includeBestScoring: false
@@ -224,14 +225,18 @@ function runWriteBestRandomTrialToSheet() {
 
   writeTransportTrialResultToSheet_(transportResult);
 
+  const bestTrial = transportResult.bestTrial || {};
+  const scoringSummary = bestTrial.scoringSummary || {};
+
   Logger.log(JSON.stringify({
     message: "Best trial allocation written to Sheet1 rows 35-38.",
+    invocationMode: "LOCAL_SIMULATED_EXTERNAL",
     trialCount: trialCount,
-    bestScore: trialResult.bestScore,
-    meanPoints: trialResult.bestScoring.meanPoints,
-    standardDeviation: trialResult.bestScoring.standardDeviation,
-    minPoints: trialResult.bestScoring.minPoints,
-    maxPoints: trialResult.bestScoring.maxPoints,
-    range: trialResult.bestScoring.range
+    bestScore: bestTrial.score,
+    meanPoints: scoringSummary.meanPoints || null,
+    standardDeviation: scoringSummary.standardDeviation || null,
+    minPoints: scoringSummary.minPoints || null,
+    maxPoints: scoringSummary.maxPoints || null,
+    range: scoringSummary.range || null
   }, null, 2));
 }
