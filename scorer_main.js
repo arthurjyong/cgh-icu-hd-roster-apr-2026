@@ -1047,7 +1047,7 @@ function computePointBalanceGlobalPenalty_(scoringContext, scorerWeights) {
   };
 }
 
-function scoreAllocation_(allocationResult, parseResult) {
+function scoreAllocation_(allocationResult, parseResult, scorerConfigResultOverride) {
   if (!allocationResult || allocationResult.ok !== true) {
     return {
       ok: false,
@@ -1057,7 +1057,7 @@ function scoreAllocation_(allocationResult, parseResult) {
     };
   }
 
-  const scorerConfigResult = buildResolvedScorerWeights_();
+  const scorerConfigResult = scorerConfigResultOverride || buildResolvedScorerWeights_();
   if (!scorerConfigResult.ok) {
     return {
       ok: false,
@@ -1199,7 +1199,6 @@ function scoreAllocation_(allocationResult, parseResult) {
       doctorSummaries: scoringContext.doctorTimelines.rows
     },
 
-    // Legacy top-level fields kept for compatibility with current writer/debug code.
     unfilledPenalty: unfilledPenalty.score,
     unfilledSlotCount: unfilledPenalty.count,
     meanPoints: pointBalanceGlobal.meanPoints,
@@ -1241,9 +1240,18 @@ function runRandomTrials_(trialCount) {
     return result;
   }
 
+  const scorerConfigResult = buildResolvedScorerWeights_();
+  if (!scorerConfigResult.ok) {
+    result.message = scorerConfigResult.message || "SCORER_CONFIG is invalid.";
+    result.scorerConfig = scorerConfigResult;
+    return result;
+  }
+
+  result.scorerConfig = scorerConfigResult;
+
   for (let i = 0; i < trialCount; i++) {
     const allocationResult = allocateAllDaysRandom_(candidatePools);
-    const scoring = scoreAllocation_(allocationResult, parseResult);
+    const scoring = scoreAllocation_(allocationResult, parseResult, scorerConfigResult);
 
     if (!scoring.ok) continue;
 
