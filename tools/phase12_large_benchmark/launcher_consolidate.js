@@ -36,14 +36,27 @@ function cloneRecord(record) {
   return JSON.parse(JSON.stringify(record));
 }
 
+function normalizeInitialTopChunkWinners(records, topN) {
+  const safeRecords = Array.isArray(records)
+    ? records.filter((record) => record && typeof record === 'object').map(cloneRecord)
+    : [];
+
+  safeRecords.sort(compareWinnerRecords);
+  return safeRecords.slice(0, topN);
+}
+
 function createChunkConsolidator(options) {
   const source = options || {};
   const topN = Number.isInteger(source.topN) && source.topN > 0
     ? source.topN
     : 10;
 
-  let globalBest = null;
-  let topChunkWinners = [];
+  let globalBest = source.initialGlobalBest ? cloneRecord(source.initialGlobalBest) : null;
+  let topChunkWinners = normalizeInitialTopChunkWinners(source.initialTopChunkWinners, topN);
+
+  if (!globalBest && topChunkWinners.length > 0) {
+    globalBest = cloneRecord(topChunkWinners[0]);
+  }
 
   function recordChunkResult(record) {
     if (!record || typeof record !== 'object') {
@@ -79,6 +92,7 @@ function createChunkConsolidator(options) {
 }
 
 module.exports = {
+  cloneRecord,
   compareWinnerRecords,
   createChunkConsolidator
 };

@@ -133,6 +133,18 @@ function resolveDryRun(cliArgs, env) {
   return true;
 }
 
+function resolveResume(cliArgs, env) {
+  if (Object.prototype.hasOwnProperty.call(cliArgs, 'resume')) {
+    return parseBoolean(cliArgs.resume, true);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(env, 'PHASE12_RESUME')) {
+    return parseBoolean(env.PHASE12_RESUME, false);
+  }
+
+  return false;
+}
+
 function buildLauncherConfig(options) {
   const source = options || {};
   const cliArgs = parseCliArgs(source.argv || []);
@@ -204,6 +216,11 @@ function buildLauncherConfig(options) {
     'false'
   ]);
 
+  const runDirRaw = firstNonEmptyString([
+    cliArgs['run-dir'],
+    env.PHASE12_RUN_DIR
+  ]);
+
   if (!snapshotPathRaw) {
     throw new Error('snapshot path is required. Use --snapshot or PHASE12_SNAPSHOT_PATH.');
   }
@@ -244,9 +261,15 @@ function buildLauncherConfig(options) {
   }
 
   const dryRun = resolveDryRun(cliArgs, env);
+  const resume = resolveResume(cliArgs, env);
   const printChunks = parseBoolean(printChunksRaw, true);
   const failFast = parseBoolean(failFastRaw, true);
   const saveChunkResponses = parseBoolean(saveChunkResponsesRaw, false);
+  const resolvedRunDir = runDirRaw ? path.resolve(runDirRaw) : null;
+
+  if (resume && !resolvedRunDir) {
+    throw new Error('runDir is required when --resume is used. Use --run-dir or PHASE12_RUN_DIR.');
+  }
 
   return {
     snapshotPath: path.resolve(snapshotPathRaw),
@@ -257,6 +280,8 @@ function buildLauncherConfig(options) {
     baseSeed: String(baseSeedRaw),
     topN,
     dryRun,
+    resume,
+    runDir: resolvedRunDir,
     printChunks,
     outputRootDir: path.resolve(outputRootDirRaw),
     requestTimeoutMs,

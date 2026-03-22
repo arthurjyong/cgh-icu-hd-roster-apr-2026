@@ -34,6 +34,17 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+function clearDir(dirPath) {
+  fs.rmSync(dirPath, { recursive: true, force: true });
+  ensureDir(dirPath);
+}
+
+function removeFileIfExists(filePath) {
+  if (fs.existsSync(filePath)) {
+    fs.rmSync(filePath, { force: true });
+  }
+}
+
 function writeJsonFile(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
@@ -48,10 +59,12 @@ function buildManifestBase(options) {
   const config = options.config;
   const snapshotInfo = options.snapshotInfo;
   const chunkPlan = options.chunkPlan;
+  const planFingerprint = options.planFingerprint || null;
 
   return {
-    launcherPhase: '12D',
+    launcherPhase: '12E',
     createdAtIso: new Date().toISOString(),
+    planFingerprint,
     config: {
       snapshotPath: snapshotInfo.file.absolutePath,
       workerUrl: config.workerUrl,
@@ -62,12 +75,15 @@ function buildManifestBase(options) {
       topN: config.topN,
       requestTimeoutMs: config.requestTimeoutMs,
       failFast: config.failFast,
-      saveChunkResponses: config.saveChunkResponses
+      saveChunkResponses: config.saveChunkResponses,
+      resume: !!config.resume,
+      runDir: config.runDir || null
     },
     snapshot: {
       contractVersion: snapshotInfo.snapshot.contractVersion,
       fileName: snapshotInfo.file.fileName,
       fileSizeBytes: snapshotInfo.file.fileSizeBytes,
+      fileSha256: snapshotInfo.file.fileSha256,
       metadata: snapshotInfo.snapshot.metadata || null
     }
   };
@@ -86,7 +102,9 @@ function summarizeChunkSuccess(execution) {
     statusCode: execution.statusCode || null,
     durationMs: execution.durationMs || null,
     bestScore: typeof bestTrial.score === 'number' ? bestTrial.score : null,
-    bestTrialIndex: typeof bestTrial.index === 'number' ? bestTrial.index : null
+    bestTrialIndex: typeof bestTrial.index === 'number' ? bestTrial.index : null,
+    startedAtIso: execution.startedAtIso || null,
+    completedAtIso: execution.completedAtIso || null
   };
 }
 
@@ -126,76 +144,173 @@ function createLocalArtifactWriter(options) {
   const config = source.config || {};
   const snapshotInfo = source.snapshotInfo || {};
   const chunkPlan = source.chunkPlan || {};
-  const runFolderName = buildRunFolderName(config);
+  const planFingerprint = source.planFingerprint || null;
   const outputRootDir = path.resolve(config.outputRootDir || path.join(process.cwd(), 'tmp', 'phase12_runs'));
-  const runDir = path.join(outputRootDir, runFolderName);
+  const runDir = config.runDir
+    ? path.resolve(config.runDir)
+    : path.join(outputRootDir, buildRunFolderName(config));
+  const runFolderName = path.basename(runDir);
   const chunksDir = path.join(runDir, 'chunks');
   const topChunksDir = path.join(runDir, 'top_chunks');
-  const manifestBase = buildManifestBase({ config, snapshotInfo, chunkPlan });
+  const checkpointTopChunksDir = path.join(runDir, 'checkpoint_top_chunks');
+  const manifestBase = buildManifestBase({ config, snapshotInfo, chunkPlan, planFingerprint });
 
-  const state = {
-    initialized: false,
-    successSummaries: [],
-    failureSummaries: []
+  const paths = {
+    outputRootDir,
+    runFolderName,
+    runDir,
+    chunksDir,
+    topChunksDir,
+    checkpointTopChunksDir,
+    checkpointPath: path.join(runDir, 'checkpoint_state.json'),
+    checkpointGlobalBestPath: path.join(runDir, 'checkpoint_global_best.transport_trial_result_v1.json'),
+    manifestPath: path.join(runDir, 'run_manifest.json'),
+    globalBestPath: path.join(runDir, 'global_best.transport_trial_result_v1.json'),
+    topChunkSummaryPath: path.join(runDir, 'top_chunks_summary.json'),
+    runStartedPath: path.join(runDir, 'run_started.json')
   };
 
-  function initializeRun() {
-    if (state.initialized) {
-      return {
-        ok: true,
-        runDir,
-        chunksDir,
-        topChunksDir
-      };
-    }
+  let initialized = false;
 
+  function ensureRunDirs() {
     ensureDir(runDir);
     ensureDir(chunksDir);
     ensureDir(topChunksDir);
+    ensureDir(checkpointTopChunksDir);
+  }
 
-    writeJsonFile(path.join(runDir, 'run_started.json'), {
-      ...manifestBase,
-      runDir,
-      chunksDir,
-      topChunksDir,
-      startedAtIso: new Date().toISOString(),
-      mode: 'EXECUTE'
-    });
+  function initializeRun(optionsForRun) {
+    const sourceRun = optionsForRun || {};
 
-    state.initialized = true;
+    if (!initialized) {
+      ensureRunDirs();
+      initialized = true;
+    }
+
+    if (!fs.existsSync(paths.runStartedPath)) {
+      writeJsonFile(paths.runStartedPath, {
+        ...manifestBase,
+        runDir,
+        chunksDir,
+        topChunksDir,
+        checkpointTopChunksDir,
+        startedAtIso: new Date().toISOString(),
+        mode: 'EXECUTE',
+        resume: !!sourceRun.isResume
+      });
+    }
+
     return {
       ok: true,
-      runDir,
-      chunksDir,
-      topChunksDir
+      ...paths
     };
   }
 
   function recordChunkSuccess(execution) {
     initializeRun();
 
-    const summary = summarizeChunkSuccess(execution);
-    state.successSummaries.push(summary);
-
     if (config.saveChunkResponses) {
+      const summary = summarizeChunkSuccess(execution);
       const fileName = `${String(summary.chunkNumber).padStart(4, '0')}__chunk_${summary.chunkNumber}.transport_trial_result_v1.json`;
       writeJsonFile(path.join(chunksDir, fileName), execution.transportResult);
     }
   }
 
-  function recordChunkFailure(failureRecord) {
+  function recordChunkFailure() {
     initializeRun();
-    state.failureSummaries.push(summarizeChunkFailure(failureRecord));
+  }
+
+  function writeCheckpointState(checkpointState) {
+    initializeRun();
+
+    const safeState = checkpointState || {};
+    const requestedChunkCount = Number.isInteger(safeState.requestedChunkCount)
+      ? safeState.requestedChunkCount
+      : (chunkPlan.chunkCount || 0);
+
+    const completedChunkNumbers = Array.isArray(safeState.completedChunkNumbers)
+      ? safeState.completedChunkNumbers.slice()
+      : [];
+
+    let globalBestSummary = null;
+    if (safeState.globalBestRecord && safeState.globalBestRecord.transportResult) {
+      writeJsonFile(paths.checkpointGlobalBestPath, safeState.globalBestRecord.transportResult);
+      globalBestSummary = {
+        ...summarizeWinnerRecord(safeState.globalBestRecord),
+        transportFileName: path.basename(paths.checkpointGlobalBestPath)
+      };
+    } else {
+      removeFileIfExists(paths.checkpointGlobalBestPath);
+    }
+
+    clearDir(checkpointTopChunksDir);
+    const topChunkSummaries = Array.isArray(safeState.topChunkWinnerRecords)
+      ? safeState.topChunkWinnerRecords.map((record, index) => {
+        const rank = String(index + 1).padStart(3, '0');
+        const chunkNumber = record && record.chunk && typeof record.chunk.chunkNumber === 'number'
+          ? record.chunk.chunkNumber
+          : 'unknown';
+        const fileName = `${rank}__chunk_${chunkNumber}.transport_trial_result_v1.json`;
+        const filePath = path.join(checkpointTopChunksDir, fileName);
+
+        if (record && record.transportResult) {
+          writeJsonFile(filePath, record.transportResult);
+        }
+
+        return {
+          ...summarizeWinnerRecord(record),
+          rank: index + 1,
+          transportFileName: path.join('checkpoint_top_chunks', fileName)
+        };
+      })
+      : [];
+
+    const checkpointDoc = {
+      checkpointVersion: safeState.checkpointVersion || 'phase12_local_checkpoint_v1',
+      launcherPhase: safeState.launcherPhase || '12E',
+      status: safeState.status || 'RUNNING',
+      planFingerprint: safeState.planFingerprint || planFingerprint,
+      runDir,
+      createdAtIso: safeState.createdAtIso || new Date().toISOString(),
+      updatedAtIso: safeState.updatedAtIso || new Date().toISOString(),
+      configSummary: safeState.configSummary || manifestBase.config,
+      snapshotSummary: safeState.snapshotSummary || manifestBase.snapshot,
+      requestedChunkCount,
+      execution: {
+        requestedChunkCount,
+        completedChunkCount: completedChunkNumbers.length,
+        failureCount: Array.isArray(safeState.failures) ? safeState.failures.length : 0,
+        pendingChunkCount: Math.max(0, requestedChunkCount - completedChunkNumbers.length)
+      },
+      completedChunkNumbers,
+      successes: Array.isArray(safeState.successes) ? safeState.successes : [],
+      failures: Array.isArray(safeState.failures) ? safeState.failures : [],
+      globalBest: globalBestSummary,
+      topChunkWinners: topChunkSummaries
+    };
+
+    writeJsonFile(paths.checkpointPath, checkpointDoc);
+
+    return {
+      ok: true,
+      checkpointPath: paths.checkpointPath,
+      checkpointGlobalBestPath: globalBestSummary ? paths.checkpointGlobalBestPath : null,
+      checkpointTopChunksDir,
+      runDir
+    };
   }
 
   function writeFinalArtifacts(finalState) {
     initializeRun();
 
     const sourceState = finalState || {};
-    const globalBest = sourceState.globalBest || null;
-    const topChunkWinners = Array.isArray(sourceState.topChunkWinners)
-      ? sourceState.topChunkWinners
+    const globalBestRecord = sourceState.globalBestRecord || null;
+    const topChunkWinnerRecords = Array.isArray(sourceState.topChunkWinnerRecords)
+      ? sourceState.topChunkWinnerRecords
       : [];
+    const requestedChunkCount = Number.isInteger(sourceState.requestedChunkCount)
+      ? sourceState.requestedChunkCount
+      : (chunkPlan.chunkCount || 0);
 
     const manifest = {
       ...manifestBase,
@@ -203,32 +318,37 @@ function createLocalArtifactWriter(options) {
       runDir,
       chunksDir,
       topChunksDir,
+      checkpointTopChunksDir,
+      status: sourceState.status || null,
       execution: {
-        successCount: state.successSummaries.length,
-        failureCount: state.failureSummaries.length,
-        chunkCount: chunkPlan.chunkCount || null
+        successCount: Array.isArray(sourceState.successes) ? sourceState.successes.length : 0,
+        failureCount: Array.isArray(sourceState.failures) ? sourceState.failures.length : 0,
+        chunkCount: requestedChunkCount,
+        completedChunkCount: Array.isArray(sourceState.completedChunkNumbers)
+          ? sourceState.completedChunkNumbers.length
+          : 0
       },
-      successes: state.successSummaries,
-      failures: state.failureSummaries,
-      globalBest: globalBest ? summarizeWinnerRecord(globalBest) : null,
-      topChunkWinners: topChunkWinners.map(summarizeWinnerRecord)
+      completedChunkNumbers: Array.isArray(sourceState.completedChunkNumbers)
+        ? sourceState.completedChunkNumbers
+        : [],
+      successes: Array.isArray(sourceState.successes) ? sourceState.successes : [],
+      failures: Array.isArray(sourceState.failures) ? sourceState.failures : [],
+      globalBest: globalBestRecord ? summarizeWinnerRecord(globalBestRecord) : null,
+      topChunkWinners: topChunkWinnerRecords.map(summarizeWinnerRecord)
     };
 
-    writeJsonFile(path.join(runDir, 'run_manifest.json'), manifest);
+    writeJsonFile(paths.manifestPath, manifest);
 
-    if (globalBest && globalBest.transportResult) {
-      writeJsonFile(
-        path.join(runDir, 'global_best.transport_trial_result_v1.json'),
-        globalBest.transportResult
-      );
+    if (globalBestRecord && globalBestRecord.transportResult) {
+      writeJsonFile(paths.globalBestPath, globalBestRecord.transportResult);
+    } else {
+      removeFileIfExists(paths.globalBestPath);
     }
 
-    writeJsonFile(
-      path.join(runDir, 'top_chunks_summary.json'),
-      topChunkWinners.map(summarizeWinnerRecord)
-    );
+    writeJsonFile(paths.topChunkSummaryPath, topChunkWinnerRecords.map(summarizeWinnerRecord));
 
-    topChunkWinners.forEach((record, index) => {
+    clearDir(topChunksDir);
+    topChunkWinnerRecords.forEach((record, index) => {
       if (!record || !record.transportResult) {
         return;
       }
@@ -238,22 +358,14 @@ function createLocalArtifactWriter(options) {
         ? record.chunk.chunkNumber
         : 'unknown';
       const fileName = `${rank}__chunk_${chunkNumber}.transport_trial_result_v1.json`;
-
       writeJsonFile(path.join(topChunksDir, fileName), record.transportResult);
     });
 
     return {
       ok: true,
-      outputRootDir,
-      runFolderName,
-      runDir,
-      chunksDir,
-      topChunksDir,
-      manifestPath: path.join(runDir, 'run_manifest.json'),
-      globalBestPath: globalBest && globalBest.transportResult
-        ? path.join(runDir, 'global_best.transport_trial_result_v1.json')
-        : null,
-      topChunkCount: topChunkWinners.length,
+      ...paths,
+      globalBestPath: globalBestRecord && globalBestRecord.transportResult ? paths.globalBestPath : null,
+      topChunkCount: topChunkWinnerRecords.length,
       savedChunkResponses: !!config.saveChunkResponses
     };
   }
@@ -262,6 +374,7 @@ function createLocalArtifactWriter(options) {
     initializeRun,
     recordChunkSuccess,
     recordChunkFailure,
+    writeCheckpointState,
     writeFinalArtifacts
   };
 }
@@ -269,5 +382,7 @@ function createLocalArtifactWriter(options) {
 module.exports = {
   createLocalArtifactWriter,
   sanitizeFileNamePart,
+  summarizeChunkFailure,
+  summarizeChunkSuccess,
   summarizeWinnerRecord
 };
