@@ -1,7 +1,9 @@
 'use strict';
 
 const http = require('http');
+const path = require('path');
 const { URL } = require('url');
+const { loadPureComputeRuntime } = require('./load_pure_compute');
 
 function getServerConfig() {
   const portValue = process.env.PORT || '8080';
@@ -11,12 +13,17 @@ function getServerConfig() {
     throw new Error(`Invalid PORT: ${portValue}`);
   }
 
+  const projectRootDirEnv = typeof process.env.TRIAL_COMPUTE_PROJECT_ROOT === 'string'
+    ? process.env.TRIAL_COMPUTE_PROJECT_ROOT.trim()
+    : '';
+
   return {
     port,
     token: typeof process.env.TRIAL_COMPUTE_EXTERNAL_TOKEN === 'string'
       ? process.env.TRIAL_COMPUTE_EXTERNAL_TOKEN.trim()
       : '',
-    maxBodyBytes: 5 * 1024 * 1024
+    maxBodyBytes: 5 * 1024 * 1024,
+    projectRootDir: projectRootDirEnv || path.resolve(__dirname, '..')
   };
 }
 
@@ -33,7 +40,7 @@ function sendJson(res, statusCode, body) {
 
 function sendMethodNotAllowed(res, allowedMethods) {
   res.writeHead(405, {
-    'Allow': allowedMethods.join(', '),
+    Allow: allowedMethods.join(', '),
     'Content-Type': 'application/json; charset=utf-8'
   });
 
@@ -131,26 +138,48 @@ function authorizeRequest(req, config) {
   return { ok: true };
 }
 
-function buildStubTransportResult(requestBody) {
-  return {
+function buildWorkerInternalErrorBody(message, extraFields) {
+  const body = {
     ok: false,
-    contractVersion: 'transport_trial_result_v1',
-    invocationMode: 'EXTERNAL_HTTP',
-    message: 'External worker skeleton reached, but compute is not wired yet.',
-    workerPhase: 'CHECKPOINT_B',
-    workerRoute: '/run-random-trials',
-    requestContractVersion: requestBody && requestBody.contractVersion
-      ? requestBody.contractVersion
-      : null,
-    trialSpec: requestBody && requestBody.trialSpec && typeof requestBody.trialSpec === 'object'
-      ? {
-          trialCount: requestBody.trialSpec.trialCount,
-          seed: Object.prototype.hasOwnProperty.call(requestBody.trialSpec, 'seed')
-            ? requestBody.trialSpec.seed
-            : null
-        }
-      : null
+    message: message || 'Unhandled worker error.'
   };
+
+  const extra = extraFields || {};
+  Object.keys(extra).forEach((key) => {
+    body[key] = extra[key];
+  });
+
+  return body;
+}
+
+function loadRuntimeOrThrow(config) {
+  return loadPureComputeRuntime({
+    projectRootDir: config.projectRootDir
+  });
+}
+
+function buildComputeNotOkTransportResult(runtime, headlessResult) {
+  const transportResult = runtime.buildTransportTrialResult_(headlessResult, {
+    includeCandidatePoolsSummary: true,
+    includeBestAllocation: true,
+    includeBestScoring: false
+  });
+
+  transportResult.invocationMode = 'EXTERNAL_HTTP';
+  transportResult.workerPhase = 'CHECKPOINT_C';
+  return transportResult;
+}
+
+function buildSuccessTransportResult(runtime, headlessResult) {
+  const transportResult = runtime.buildTransportTrialResult_(headlessResult, {
+    includeCandidatePoolsSummary: true,
+    includeBestAllocation: true,
+    includeBestScoring: false
+  });
+
+  transportResult.invocationMode = 'EXTERNAL_HTTP';
+  transportResult.workerPhase = 'CHECKPOINT_C';
+  return transportResult;
 }
 
 async function handleHealthz(req, res, config) {
@@ -159,12 +188,36 @@ async function handleHealthz(req, res, config) {
     return;
   }
 
+  let runtimeStatus = {
+    ok: false,
+    loaded: false,
+    message: 'Pure compute runtime not loaded yet.'
+  };
+
+  try {
+    const runtime = loadRuntimeOrThrow(config);
+    runtimeStatus = {
+      ok: true,
+      loaded: true,
+      loadedFiles: runtime.loadedFiles,
+      projectRootDir: runtime.rootDir
+    };
+  } catch (error) {
+    runtimeStatus = {
+      ok: false,
+      loaded: false,
+      message: error && error.message ? error.message : 'Failed to load pure compute runtime.'
+    };
+  }
+
   sendJson(res, 200, {
     ok: true,
     service: 'trial-compute-worker',
-    phase: 'CHECKPOINT_B',
-    message: 'Worker skeleton is up.',
+    phase: 'CHECKPOINT_C',
+    message: 'Worker compute path is wired.',
     tokenConfigured: !!config.token,
+    projectRootDir: config.projectRootDir,
+    runtime: runtimeStatus,
     routes: {
       healthz: 'GET /healthz',
       runRandomTrials: 'POST /run-random-trials'
@@ -212,7 +265,77 @@ async function handleRunRandomTrials(req, res, config) {
     return;
   }
 
-  sendJson(res, 200, buildStubTransportResult(parsedBody.value));
+  let runtime;
+  try {
+    runtime = loadRuntimeOrThrow(config);
+  } catch (error) {
+    sendJson(res, 500, buildWorkerInternalErrorBody(
+      'Failed to load pure compute runtime.',
+      {
+        workerPhase: 'CHECKPOINT_C',
+        detail: error && error.message ? error.message : String(error)
+      }
+    ));
+    return;
+  }
+
+  const requestValidation = runtime.validateTrialComputeRequest_(parsedBody.value);
+  if (!requestValidation || requestValidation.ok !== true) {
+    sendJson(res, 400, {
+      ok: false,
+      message: requestValidation && requestValidation.message
+        ? requestValidation.message
+        : 'Invalid compute request body.',
+      requestValidation: requestValidation || null,
+      workerPhase: 'CHECKPOINT_C'
+    });
+    return;
+  }
+
+  let headlessResult;
+  try {
+    headlessResult = runtime.runRandomTrialsHeadless_(parsedBody.value);
+  } catch (error) {
+    sendJson(res, 500, buildWorkerInternalErrorBody(
+      'Headless compute threw an error.',
+      {
+        workerPhase: 'CHECKPOINT_C',
+        detail: error && error.message ? error.message : String(error)
+      }
+    ));
+    return;
+  }
+
+  if (!headlessResult || typeof headlessResult !== 'object' || Array.isArray(headlessResult)) {
+    sendJson(res, 500, buildWorkerInternalErrorBody(
+      'Headless compute returned an invalid result.',
+      {
+        workerPhase: 'CHECKPOINT_C'
+      }
+    ));
+    return;
+  }
+
+  if (headlessResult.ok !== true) {
+    sendJson(res, 200, buildComputeNotOkTransportResult(runtime, headlessResult));
+    return;
+  }
+
+  const transportResult = buildSuccessTransportResult(runtime, headlessResult);
+  const responseValidation = runtime.validateTransportTrialResult_(transportResult);
+
+  if (!responseValidation || responseValidation.ok !== true) {
+    sendJson(res, 500, buildWorkerInternalErrorBody(
+      'Worker produced an invalid transport response body.',
+      {
+        workerPhase: 'CHECKPOINT_C',
+        responseValidation: responseValidation || null
+      }
+    ));
+    return;
+  }
+
+  sendJson(res, 200, transportResult);
 }
 
 function createServer(config) {
@@ -236,10 +359,9 @@ function createServer(config) {
         path: url.pathname
       });
     } catch (error) {
-      sendJson(res, 500, {
-        ok: false,
-        message: error && error.message ? error.message : 'Unhandled worker error.'
-      });
+      sendJson(res, 500, buildWorkerInternalErrorBody(
+        error && error.message ? error.message : 'Unhandled worker error.'
+      ));
     }
   });
 }
@@ -253,8 +375,9 @@ function startServer() {
       ok: true,
       message: 'trial-compute-worker listening',
       port: config.port,
-      phase: 'CHECKPOINT_B',
-      tokenConfigured: !!config.token
+      phase: 'CHECKPOINT_C',
+      tokenConfigured: !!config.token,
+      projectRootDir: config.projectRootDir
     }));
   });
 
@@ -267,11 +390,14 @@ if (require.main === module) {
 
 module.exports = {
   authorizeRequest,
-  buildStubTransportResult,
+  buildComputeNotOkTransportResult,
+  buildSuccessTransportResult,
+  buildWorkerInternalErrorBody,
   createServer,
   getServerConfig,
   handleHealthz,
   handleRunRandomTrials,
+  loadRuntimeOrThrow,
   parseBearerToken,
   readJsonBody,
   sendJson,

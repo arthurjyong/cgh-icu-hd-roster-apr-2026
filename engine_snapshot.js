@@ -185,3 +185,141 @@ function validateTrialComputeRequest_(requestBody) {
     doctorCount: snapshotValidation.doctorCount
   };
 }
+
+function buildDebugComputeSnapshotForInvocation_(options) {
+  const normalizedOptions = options && typeof options === "object" && !Array.isArray(options)
+    ? options
+    : {};
+
+  const trialCount = typeof normalizedOptions.trialCount === "number"
+    && isFinite(normalizedOptions.trialCount)
+    && normalizedOptions.trialCount >= 1
+      ? normalizedOptions.trialCount
+      : 200;
+
+  const prepareOptions = {};
+  if (Object.prototype.hasOwnProperty.call(normalizedOptions, "seed")) {
+    prepareOptions.seed = normalizedOptions.seed;
+  }
+
+  if (typeof prepareRandomTrialsSnapshot_ !== "function") {
+    return {
+      ok: false,
+      contractKind: "compute_snapshot_debug_result",
+      expectedContractVersion: "compute_snapshot_v2",
+      message: "prepareRandomTrialsSnapshot_ is not available.",
+      issues: [
+        "prepareRandomTrialsSnapshot_ must be defined before building a debug compute snapshot."
+      ]
+    };
+  }
+
+  const prepared = prepareRandomTrialsSnapshot_(trialCount, prepareOptions);
+
+  if (!prepared || prepared.ok !== true) {
+    return prepared || {
+      ok: false,
+      contractKind: "compute_snapshot_debug_result",
+      expectedContractVersion: "compute_snapshot_v2",
+      message: "prepareRandomTrialsSnapshot_ returned no result."
+    };
+  }
+
+  const snapshot = prepared.snapshot;
+  const validation = validateTrialComputeRequest_(snapshot);
+
+  if (!validation || validation.ok !== true) {
+    return {
+      ok: false,
+      contractKind: "compute_snapshot_debug_result",
+      expectedContractVersion: "compute_snapshot_v2",
+      message: validation && validation.message
+        ? validation.message
+        : "Built snapshot failed validation.",
+      issues: validation && validation.issues ? validation.issues : [],
+      validation: validation || null,
+      snapshot: snapshot || null
+    };
+  }
+
+  return {
+    ok: true,
+    contractKind: "compute_snapshot_debug_result",
+    contractVersion: snapshot.contractVersion,
+    expectedContractVersion: "compute_snapshot_v2",
+    invocationMode: "EXTERNAL_HTTP",
+    trialCount: snapshot && snapshot.trialSpec ? snapshot.trialSpec.trialCount : null,
+    seed: snapshot && snapshot.trialSpec
+      && Object.prototype.hasOwnProperty.call(snapshot.trialSpec, "seed")
+        ? snapshot.trialSpec.seed
+        : null,
+    dateCount: snapshot && snapshot.metadata ? snapshot.metadata.dateCount : null,
+    doctorCount: snapshot && snapshot.metadata ? snapshot.metadata.doctorCount : null,
+    validation: validation,
+    snapshot: snapshot
+  };
+}
+
+
+function writeDebugComputeSnapshotForInvocationToDrive_(options) {
+  const debugResult = buildDebugComputeSnapshotForInvocation_(options);
+
+  if (!debugResult || debugResult.ok !== true) {
+    return debugResult || {
+      ok: false,
+      contractKind: "compute_snapshot_drive_export_result",
+      expectedContractVersion: "compute_snapshot_v2",
+      message: "Unable to build compute snapshot for Drive export."
+    };
+  }
+
+  if (typeof DriveApp === "undefined" || !DriveApp || typeof DriveApp.createFile !== "function") {
+    return {
+      ok: false,
+      contractKind: "compute_snapshot_drive_export_result",
+      contractVersion: debugResult.contractVersion,
+      expectedContractVersion: "compute_snapshot_v2",
+      message: "DriveApp.createFile is not available.",
+      snapshotSummary: {
+        trialCount: debugResult.trialCount,
+        seed: debugResult.seed,
+        dateCount: debugResult.dateCount,
+        doctorCount: debugResult.doctorCount
+      }
+    };
+  }
+
+  const snapshot = debugResult.snapshot;
+  const seedLabel = debugResult.seed === null || debugResult.seed === undefined || debugResult.seed === ""
+    ? "null"
+    : String(debugResult.seed);
+  const fileName = [
+    snapshot.contractVersion || "compute_snapshot_v2",
+    "seed" + seedLabel,
+    "trials" + String(debugResult.trialCount)
+  ].join("_") + ".json";
+
+  const jsonText = JSON.stringify(snapshot, null, 2);
+  const file = DriveApp.createFile(fileName, jsonText, MimeType.PLAIN_TEXT);
+
+  return {
+    ok: true,
+    contractKind: "compute_snapshot_drive_export_result",
+    contractVersion: snapshot.contractVersion,
+    expectedContractVersion: "compute_snapshot_v2",
+    invocationMode: "EXTERNAL_HTTP",
+    message: "Compute snapshot written to Google Drive.",
+    trialCount: debugResult.trialCount,
+    seed: debugResult.seed,
+    dateCount: debugResult.dateCount,
+    doctorCount: debugResult.doctorCount,
+    validation: debugResult.validation,
+    file: {
+      id: file.getId(),
+      name: file.getName(),
+      url: file.getUrl(),
+      mimeType: file.getMimeType(),
+      sizeBytes: jsonText.length
+    }
+  };
+}

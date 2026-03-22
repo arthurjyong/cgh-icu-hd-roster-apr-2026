@@ -42,3 +42,23 @@ function debugLocalDirectTransportTrialResult() {
 function debugExternalHttpTransportTrialResult() {
   debugTransportTrialResultForInvocationMode_("EXTERNAL_HTTP");
 }
+
+function debugBuildComputeSnapshotForExternalHttp() {
+  const result = buildDebugComputeSnapshotForInvocation_({
+    trialCount: 200,
+    seed: 12345
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function debugWriteComputeSnapshotForExternalHttpToDrive() {
+  const result = writeDebugComputeSnapshotForInvocationToDrive_({
+    trialCount: 200,
+    seed: 12345
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
