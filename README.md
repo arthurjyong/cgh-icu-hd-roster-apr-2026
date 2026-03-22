@@ -20,8 +20,13 @@ Current state:
 - Apps Script-side transport-result writeback validation implemented
 - output writer implemented
 - benchmark helpers implemented
+- Apps Script `EXTERNAL_HTTP` invocation mode implemented
+- Script Properties-based external worker config implemented
+- public Cloud Run worker deployment implemented
+- external worker compute path implemented and validated
+- parity validated across local direct, simulated external, and public external HTTP modes
 
-The system is usable in Google Sheets today, but very large random-trial counts are increasingly limited by Apps Script runtime.
+The system is usable in Google Sheets today. Large random-trial counts are increasingly limited by Apps Script runtime, but the external compute path is now operational for offloading heavy trial batches.
 
 ## Purpose
 
@@ -51,14 +56,17 @@ This is a button-triggered allocator, not a real-time scheduling system.
 
 ## Current architecture
 
-Google Sheets is the user-facing control panel.
+Google Sheets is the live user-facing control panel.
 
 Apps Script currently handles:
 - reading live sheet data
 - parsing doctors, dates, requests, and rule effects
 - resolving scorer configuration from code defaults plus optional sheet overrides
 - building a normalized compute snapshot
-- invoking headless compute locally inside Apps Script today
+- invoking compute in one of several modes:
+  - local direct
+  - local simulated external
+  - public external HTTP worker
 - validating transport-friendly trial results before sheet writeback
 - writing the best result back to the sheet
 
@@ -69,11 +77,17 @@ Headless compute currently handles:
 - scoring trials
 - returning the best result
 
-The codebase is intentionally structured in layers so the heavy allocation/scoring path can later be executed outside Apps Script without redesigning roster rules or moving sheet read/write into the compute engine.
+External worker currently handles:
+- accepting a `compute_snapshot_v2` request over HTTP
+- validating request structure
+- running headless random trials
+- returning a `transport_trial_result_v1` response
+
+The codebase is intentionally structured in layers so the heavy allocation/scoring path can run outside Apps Script without redesigning roster rules or moving sheet read/write into the compute engine.
 
 ## Current compute contracts
 
-The current contract boundary is already explicit.
+The contract boundary is explicit.
 
 ### Input snapshot contract
 
@@ -103,15 +117,47 @@ This is the full internal result shape returned by the headless trial runner.
 Current transport/helper result contract:
 - `transport_trial_result_v1`
 
-This is the leaner result shape intended for future external handoff.
+This is the leaner result shape intended for transport and external handoff.
 
 Current intent:
-- future external request boundary = `compute_snapshot_v2`
-- future external response boundary = `transport_trial_result_v1`
+- external request boundary = `compute_snapshot_v2`
+- external response boundary = `transport_trial_result_v1`
 
 Current operational note:
 - sheet writeback still requires `bestAllocation` to be included in the transport result
 - this is intentional for now to preserve the existing writer and keep diffs small
+
+## Phase 10 status — external compute deployed
+
+Completed:
+- public Cloud Run worker deployed successfully
+- Artifact Registry image build/push working
+- Apps Script `EXTERNAL_HTTP` mode working end-to-end
+- Script Properties used:
+  - `TRIAL_COMPUTE_EXTERNAL_URL`
+  - `TRIAL_COMPUTE_EXTERNAL_TOKEN`
+- public worker accepts `compute_snapshot_v2`
+- public worker returns `transport_trial_result_v1`
+- `runWriteBestRandomTrialToSheetExternalHttp()` successfully writes best allocation back to `Sheet1` rows 35–38
+
+Validated:
+- parity confirmed across:
+  - `LOCAL_DIRECT`
+  - `LOCAL_SIMULATED_EXTERNAL`
+  - public `EXTERNAL_HTTP`
+- matching validated case:
+  - `trialCount = 200`
+  - `seed = 12345`
+  - `bestTrial.index = 137`
+  - `bestTrial.score = 3420.8473893633545`
+  - `emptySlotCount = 0`
+
+Operational notes:
+- Cloud Run image must be built for `linux/amd64`
+- Apple Silicon default image build was rejected by Cloud Run until rebuilt with `docker buildx build --platform linux/amd64 --push`
+- `GET /healthz` is currently non-blocking and not required for the production path
+- Google Sheets + Apps Script remain the live UI/controller
+- external worker remains compute-only
 
 ## Project structure
 
@@ -128,9 +174,15 @@ Current source files are organized roughly as follows:
 - `rng_seeded.js` — seeded RNG utilities for reproducible random trials
 - `engine_snapshot.js` — build and validate normalized compute snapshots
 - `engine_runner.js` — headless random-trial runner and transport-result helpers
+- `engine_http_config.js` — external HTTP config lookup and validation
+- `engine_invoke.js` — invocation-mode wiring for local and external compute
 - `writer_output.js` — write output back to Google Sheets and validate transport results before writeback
 - `benchmark_trials.js` — benchmark repeated trial counts
 - `Code.js` — top-level Apps Script entry points
+- `worker/server.js` — external HTTP worker server
+- `worker/load_pure_compute.js` — worker bootstrap for pure compute runtime
+- `worker/package.json` — worker package definition
+- `worker/Dockerfile` — worker container build file
 - `appsscript.json` — Apps Script manifest
 
 ## Workflow
@@ -147,7 +199,8 @@ Important notes:
 - GitHub is source control
 - `clasp` is the Apps Script sync path
 - there is no native direct GitHub-to-Apps Script live sync
-- Google Sheets + Apps Script remain the live UI/controller unless explicitly changed
+- Google Sheets + Apps Script remain the live UI/controller
+- `worker/` is intentionally excluded from Apps Script push via `.claspignore`
 
 ## Allocation model
 
@@ -283,7 +336,12 @@ Useful entry points and helpers include:
 - `debugReadResolvedScorerWeights()` — inspect the currently resolved scorer weights
 - `debugRunRandomTrials()` — run allocation and scoring without writing output
 - `debugTransportTrialResult()` — inspect the transport-friendly result shape
+- `debugReadTrialComputeExternalHttpConfig()` — inspect external HTTP worker config
+- `debugLocalDirectTransportTrialResult()` — inspect local direct transport result
+- `debugSimulatedExternalTransportTrialResult()` — inspect simulated external transport result
+- `debugExternalHttpTransportTrialResult()` — inspect public external HTTP transport result
 - `runWriteBestRandomTrialToSheet()` — run allocation and write the best result back to the sheet
+- `runWriteBestRandomTrialToSheetExternalHttp()` — run allocation via public external worker and write the best result back to the sheet
 
 ## Current scaling reality
 
@@ -291,39 +349,41 @@ The current random-trial approach continues to improve best scores with larger t
 
 That is operationally useful, but Apps Script runtime becomes the bottleneck once trial counts get large enough.
 
-So the current position is:
+Current position:
 - Apps Script is good enough for practical in-sheet runs
-- deeper brute-force search likely needs external batch compute
-- the current codebase is already being prepared for future external execution through explicit snapshot and result contracts
+- the external compute path is now operational for offloading heavy trial batches
+- deeper brute-force search is better suited to external compute
+- the current codebase has already been prepared for external execution through explicit snapshot and result contracts
 
 ## Planned compute-separation direction
 
-The intended migration path is incremental, not a rewrite.
+The migration path remains incremental, not a rewrite.
 
-Likely direction:
+Current direction:
 - Google Sheets remains the UI
 - Apps Script remains the sheet-side controller/orchestrator
 - Apps Script continues to read the sheet, parse input, resolve scorer config, build snapshots, validate results, and write output
-- heavy random-trial computation moves to a headless worker only when needed
+- heavy random-trial computation can run locally or externally depending on invocation mode
 - the compute engine remains reusable pure JavaScript with minimal or no `SpreadsheetApp` dependency in the hot path
-- future cloud execution may use a batch-worker pattern such as Cloud Run Jobs
+- future cloud execution can continue to build on the current Cloud Run-based external worker path
 
-This is a planned direction, not yet a full migration.
+This is now a partially completed migration, not just a future concept.
 
 ## Repository and deployment notes
 
-- this repository currently tracks the local source of the Apps Script project
+- this repository tracks the local source of the Apps Script project and related worker files
 - `.clasp.json` is intentionally not committed
+- `.claspignore` is used to keep worker files out of the Apps Script push path
 - the live spreadsheet and Apps Script deployment are managed separately
-- this repository may later also include shared pure-compute code and external worker code
+- the external worker is deployed separately from Apps Script
 - no open-source license is granted at this time
 - this project should be reviewed and validated before real operational use
 
 ## Near-term priorities
 
 Planned next improvements include:
-- tighter local validation of the future external request/response seam
 - clearer reporting of allocation failures and trial outcomes
 - further scorer tuning based on operational feedback
-- optional external batch compute for very large trial counts
+- practical optimization of external compute trial volumes
+- optional operational cleanup around non-blocking routes such as `/healthz`
 - keeping migration steps incremental and compatible with the current GitHub + clasp workflow
