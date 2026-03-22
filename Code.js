@@ -62,3 +62,9 @@ function debugWriteComputeSnapshotForExternalHttpToDrive() {
   Logger.log(JSON.stringify(result, null, 2));
   return result;
 }
+
+function exportPhase12BenchmarkSnapshotToDrive() {
+  const result = exportPhase12BenchmarkSnapshotToDrive_();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
