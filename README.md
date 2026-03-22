@@ -31,13 +31,17 @@ Current state:
 - local chunked benchmark consolidation implemented
 - local checkpoint/resume implemented
 - launcher Drive upload via desktop OAuth implemented
-- Apps Script Drive import of benchmark result implemented
-- Apps Script benchmark summary sheet write implemented
-- Apps Script import-to-sheet writeback implemented
+- campaign-mode external benchmarking implemented
+- `benchmark_campaign_report_v1.json` implemented
+- nested per-run campaign artifact layout implemented under `runs/`
+- canonical raw per-run benchmark import into `BENCHMARK_TRIALS` implemented
+- derived benchmark grouping in `BENCHMARK_SUMMARY` implemented
+- imported best benchmark winner writeback to `Sheet1` rows 35–38 implemented
+- score-direction consistency fixed so lower scorer totals win end-to-end
 
 The system is usable in Google Sheets today.
 
-Normal in-sheet allocation remains available for practical runs. Very large random-trial counts are better handled through the Phase 12 external benchmarking path, which is now operational end-to-end.
+Normal in-sheet allocation remains available for practical runs. Very large random-trial counts are better handled through the external benchmarking path, which is now operational end-to-end from snapshot export through campaign import and winner writeback.
 
 ## Purpose
 
@@ -79,10 +83,12 @@ Apps Script currently handles:
   - local simulated external
   - public external HTTP worker
 - exporting validated snapshots to Google Drive
-- importing benchmark result artifacts from Google Drive
+- importing benchmark campaign report artifacts from Google Drive
 - validating transport-friendly trial results before sheet writeback
 - writing the best result back to the sheet
-- writing benchmark import summaries to a dedicated sheet tab
+- writing benchmark raw rows to `BENCHMARK_TRIALS`
+- writing grouped benchmark summaries to `BENCHMARK_SUMMARY`
+- writing imported benchmark winners to `Sheet1` rows 35–38
 
 Headless compute currently handles:
 - consuming the normalized compute snapshot
@@ -97,13 +103,15 @@ External worker currently handles:
 - running headless random trials
 - returning a `transport_trial_result_v1` response
 
-Local Phase 12 launcher currently handles:
+Local benchmarking launcher currently handles:
 - reading exported snapshot artifacts
 - planning large trial runs in deterministic chunks
 - invoking the Cloud Run worker chunk-by-chunk
 - consolidating global best and bounded top-N chunk winners
 - checkpoint/resume
-- uploading final run artifacts back to Google Drive
+- campaign planning across trial counts and repeats
+- generating `benchmark_campaign_report_v1.json`
+- uploading campaign folders and nested run artifacts back to Google Drive
 
 The codebase is intentionally structured in layers so the heavy allocation/scoring path can run outside Apps Script without redesigning roster rules or moving sheet read/write into the compute engine.
 
@@ -200,7 +208,7 @@ Completed:
 - local checkpoint/resume implemented
 - launcher upload to Drive via desktop OAuth implemented
 - Apps Script import of benchmark result from Drive implemented
-- Apps Script summary print to `Phase12_Benchmark_Import` implemented
+- Apps Script summary print to benchmark sheets implemented
 - Apps Script writeback of imported winning allocation to `Sheet1` rows 35–38 implemented
 
 Current Drive artifact layout:
@@ -230,10 +238,90 @@ Current operational reality:
 - local launcher owns long chunked benchmark runs
 - imported benchmark results reuse the existing writer path rather than replacing it
 
-Known caveat:
-- selected-run import support is implemented in Apps Script
-- latest-import path has been validated live
-- distinct selected-run validation against two different uploaded run folders is still pending simply because only one run folder currently exists in `benchmark_runs`
+## Phase 13 status — campaign benchmarking, raw run import, and benchmark winner writeback
+
+### Phase 13A — campaign mode
+
+Completed:
+- launcher campaign mode implemented
+- one campaign can run multiple trial counts across multiple repeats against one fixed exported snapshot
+- campaign planning and run identity made explicit
+
+### Phase 13B — enriched campaign reporting and nested upload
+
+Completed:
+- launcher writes `benchmark_campaign_report_v1.json`
+- launcher writes local nested per-run artifacts under `runs/`
+- launcher can upload campaign folders and nested run artifacts to Drive
+- top-level `winner` in campaign report kept as a lean pointer
+- rich per-run metrics stored in matching `runs[]` entries
+
+Enriched per-run metrics now include:
+- `invocationMode`
+- `meanPoints`
+- `standardDeviation`
+- `range`
+
+### Phase 13C — campaign raw-run import into benchmark sheets
+
+Completed:
+- Apps Script can read one `benchmark_campaign_report_v1.json` from Drive
+- report contract validation implemented
+- `runs[]` converted into one raw row per actual run
+- canonical raw per-run import into `BENCHMARK_TRIALS` implemented
+- grouped derived summary refresh into `BENCHMARK_SUMMARY` implemented
+- latest and selected campaign import modes implemented
+- append and replace write modes implemented
+
+Current `BENCHMARK_TRIALS` raw row schema includes:
+- `ImportTimestamp`
+- `CampaignBatchLabel`
+- `CampaignFolderName`
+- `SnapshotLabel`
+- `SnapshotFileSha256`
+- `TrialCount`
+- `RepeatIndex`
+- `RunId`
+- `Ok`
+- `BestScore`
+- `BestTrialIndex`
+- `RuntimeMs`
+- `RuntimeSec`
+- `InvocationMode`
+- `Seed`
+- `RunFolderName`
+- `ArtifactFileName`
+- `MeanPoints`
+- `StandardDeviation`
+- `Range`
+- `TotalScore`
+- `SummaryMessage`
+- `FailureMessage`
+
+### Phase 13D — write back best imported benchmark winner
+
+Completed:
+- Apps Script can read `BENCHMARK_TRIALS` as the operational raw-run surface
+- writeback no longer depends on brittle active-row UI selection
+- valid imported run rows are filtered from `BENCHMARK_TRIALS`
+- exactly one campaign must be in scope for writeback
+- best imported winner is selected by minimum `BestScore`
+- linked nested run artifact is resolved from Drive using:
+  - `CampaignFolderName`
+  - `RunFolderName`
+  - `ArtifactFileName`
+- linked `transport_trial_result_v1` artifact is validated
+- best imported benchmark winner can be written to `Sheet1` rows 35–38
+
+Important consistency fix completed during this phase:
+- scorer semantics are lower-is-better
+- per-run engine selection is lower-is-better
+- launcher campaign winner selection was corrected so lower `bestScore` now wins end-to-end
+
+Current operational note:
+- older campaign reports generated before the score-direction fix may still contain stale top-level winner pointers
+- Phase 13D does not rely on that top-level winner pointer
+- it recomputes the best imported winner directly from `BENCHMARK_TRIALS` by minimum `BestScore`
 
 ## Project structure
 
@@ -253,10 +341,10 @@ Current source files are organized roughly as follows:
 - `engine_http_config.js` — external HTTP config lookup and validation
 - `engine_invoke.js` — invocation-mode wiring for local and external compute
 - `writer_output.js` — write output back to Google Sheets and validate transport results before writeback
-- `benchmark_trials.js` — benchmark repeated trial counts
-- `benchmark_drive_config.js` — Apps Script Drive folder/config helpers for Phase 12
+- `benchmark_trials.js` — benchmark sheet schemas, raw rows, and derived summary helpers
+- `benchmark_drive_config.js` — Apps Script Drive folder/config helpers
 - `benchmark_snapshot_export.js` — Apps Script snapshot export to Drive
-- `benchmark_result_import.js` — Apps Script benchmark result import from Drive and summary/writeback helpers
+- `benchmark_result_import.js` — Apps Script campaign/raw-result import and benchmark winner writeback helpers
 - `Code.js` — top-level Apps Script entry points
 - `tools/phase12_large_benchmark/` — local large-benchmark launcher and related tooling
 - `worker/server.js` — external HTTP worker server
@@ -349,6 +437,8 @@ Current priorities are:
 In general:
 - global fairness matters more than local preference satisfaction
 - soft scoring must never override hard validity rules
+- lower total scorer value is better
+- invalid allocations are treated as worst and should never win
 
 ## Scorer configuration
 
@@ -424,7 +514,7 @@ Useful entry points and helpers include:
 - `runWriteBestRandomTrialToSheet()` — run allocation and write the best result back to the sheet
 - `runWriteBestRandomTrialToSheetExternalHttp()` — run allocation via public external worker and write the best result back to the sheet
 
-Phase 12 Drive/export/import helpers include:
+Drive/export/import helpers include:
 - `debugEnsurePhase12BenchmarkDriveLayout()` — ensure Drive root and subfolders exist
 - `debugExportComputeSnapshotToDrive()` — export `compute_snapshot_v2` snapshot to Drive
 - `debugInspectLatestBenchmarkResultFromDrive()` — inspect latest uploaded benchmark result artifact
@@ -439,6 +529,21 @@ Phase 12 Drive/export/import helpers include:
 - `clearPhase12BenchmarkImportSelectedRunFolder()` — clear selected run folder property
 - `setPhase12BenchmarkImportLatestSelection()` — reset to latest-import mode
 
+Phase 13 campaign helpers include:
+- `debugInspectLatestBenchmarkCampaignReportFromDrive()` — inspect latest uploaded campaign report
+- `runReplaceBenchmarkTrialsWithLatestCampaignReport()` — replace `BENCHMARK_TRIALS` with latest campaign raw rows and refresh summary
+- `runAppendLatestBenchmarkCampaignReportToTrialsSheet()` — append latest campaign raw rows to `BENCHMARK_TRIALS` and refresh summary
+- `debugInspectSelectedBenchmarkCampaignReportFromDrive()` — inspect selected campaign report
+- `runReplaceBenchmarkTrialsWithSelectedCampaignReport()` — replace trials sheet from selected campaign report
+- `runAppendSelectedBenchmarkCampaignReportToTrialsSheet()` — append trials sheet from selected campaign report
+- `debugGetPhase13CampaignImportSelection()` — inspect current campaign import selection
+- `setPhase13CampaignImportSelectedCampaignFolder(campaignFolderName)` — set selected campaign folder name
+- `setPhase13CampaignImportSelectedArtifactFileName(artifactFileName)` — set selected campaign report file name
+- `clearPhase13CampaignImportSelectedCampaignFolder()` — clear selected campaign folder property
+- `setPhase13CampaignImportLatestSelection()` — reset to latest campaign import mode
+- `debugInspectBestBenchmarkTrialsWinnerForWriteback()` — inspect the minimum-score valid imported run and its linked artifact
+- `runWriteBestBenchmarkTrialsWinnerToSheet()` — write the minimum-score valid imported benchmark winner to `Sheet1` rows 35–38
+
 ## Current scaling reality
 
 The current random-trial approach continues to improve best scores with larger trial counts.
@@ -448,7 +553,7 @@ That is operationally useful, but Apps Script runtime becomes the bottleneck onc
 Current position:
 - Apps Script is good enough for practical in-sheet runs
 - the external compute path is operational for offloading heavy trial batches
-- the Phase 12 launcher path is operational for much larger chunked trial runs
+- the external launcher path is operational for much larger chunked trial runs
 - deeper brute-force search is better suited to external compute
 - the current codebase has already been prepared for external execution through explicit snapshot and result contracts
 
@@ -456,12 +561,13 @@ Current position:
 
 Current intended large-run workflow:
 1. in Apps Script, export live-sheet snapshot to Drive
-2. locally, run the Phase 12 launcher against the Cloud Run worker
+2. locally, run the large-benchmark launcher against the Cloud Run worker
 3. let the launcher checkpoint/resume as needed
-4. upload final run artifacts to Drive
-5. in Apps Script, inspect latest or selected benchmark result
-6. print benchmark summary to `Phase12_Benchmark_Import`
-7. write imported winning allocation back to `Sheet1` rows 35–38 when desired
+4. upload final run or campaign artifacts to Drive
+5. in Apps Script, inspect latest or selected benchmark artifacts
+6. import raw campaign runs into `BENCHMARK_TRIALS`
+7. review grouped results in `BENCHMARK_SUMMARY`
+8. write imported best benchmark winner back to `Sheet1` rows 35–38 when desired
 
 This preserves Google Sheets + Apps Script as the live operational front end while allowing much larger search volumes outside Apps Script runtime limits.
 
@@ -474,7 +580,7 @@ Current direction:
 - Apps Script remains the sheet-side controller/orchestrator
 - Apps Script continues to read the sheet, parse input, resolve scorer config, build snapshots, validate results, and write output
 - heavy random-trial computation can run locally or externally depending on invocation mode
-- large chunked benchmarking can run through the Phase 12 launcher path
+- large chunked benchmarking can run through the launcher path
 - the compute engine remains reusable pure JavaScript with minimal or no `SpreadsheetApp` dependency in the hot path
 - future cloud execution can continue to build on the current Cloud Run-based external worker path
 
@@ -497,5 +603,5 @@ Planned next improvements include:
 - further scorer tuning based on operational feedback
 - practical optimization of external compute trial volumes
 - optional operational cleanup around non-blocking routes such as `/healthz`
-- fuller validation of selected-run import once more than one benchmark run folder exists
+- clearer post-campaign operational reporting now that raw import and winner writeback are working
 - keeping migration steps incremental and compatible with the current GitHub + clasp workflow
