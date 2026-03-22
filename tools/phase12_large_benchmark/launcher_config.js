@@ -2,6 +2,25 @@
 
 const path = require('path');
 
+const MODE_SINGLE_RUN = 'SINGLE_RUN';
+const MODE_CAMPAIGN = 'CAMPAIGN';
+
+const DEFAULT_CAMPAIGN_TRIAL_COUNTS = [
+  1,
+  5,
+  10,
+  50,
+  100,
+  500,
+  1000,
+  5000,
+  10000,
+  50000,
+  100000,
+  500000,
+  1000000
+];
+
 function parseCliArgs(argv) {
   const result = {};
   const args = Array.isArray(argv) ? argv.slice() : [];
@@ -145,10 +164,82 @@ function resolveResume(cliArgs, env) {
   return false;
 }
 
+
+function parsePositiveIntegerList(rawValue, fieldName, defaultValues) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return Array.isArray(defaultValues) ? defaultValues.slice() : [];
+  }
+
+  const parts = String(rawValue)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (!parts.length) {
+    throw new Error(`${fieldName} must contain at least one positive integer.`);
+  }
+
+  return parts.map((part) => parseRequiredPositiveInteger(part, fieldName));
+}
+
+function buildDefaultCampaignBatchLabel(now) {
+  const date = now instanceof Date ? now : new Date();
+  const iso = date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  return `phase13_${iso.replace(/[:]/g, '').replace(/[^A-Za-z0-9_-]/g, '_')}`;
+}
+
+function normalizeCampaignBatchLabel(rawValue, fallbackValue) {
+  const source = firstNonEmptyString([rawValue, fallbackValue]);
+  const normalized = source
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+
+  if (!normalized) {
+    throw new Error('campaignBatchLabel must contain at least one valid character.');
+  }
+
+  return normalized;
+}
+
+function resolveLaunchMode(cliArgs, env) {
+  const explicitModeRaw = firstNonEmptyString([
+    cliArgs.mode,
+    env.PHASE13_MODE
+  ]);
+
+  if (explicitModeRaw) {
+    const normalized = explicitModeRaw.trim().toUpperCase();
+
+    if (normalized === MODE_SINGLE_RUN) {
+      return MODE_SINGLE_RUN;
+    }
+
+    if (normalized === MODE_CAMPAIGN) {
+      return MODE_CAMPAIGN;
+    }
+
+    throw new Error(
+      `mode must be ${MODE_SINGLE_RUN} or ${MODE_CAMPAIGN}. Received: ${explicitModeRaw}`
+    );
+  }
+
+  if (Object.prototype.hasOwnProperty.call(cliArgs, 'campaign')) {
+    return parseBoolean(cliArgs.campaign, true) ? MODE_CAMPAIGN : MODE_SINGLE_RUN;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(env, 'PHASE13_CAMPAIGN')) {
+    return parseBoolean(env.PHASE13_CAMPAIGN, false) ? MODE_CAMPAIGN : MODE_SINGLE_RUN;
+  }
+
+  return MODE_SINGLE_RUN;
+}
+
 function buildLauncherConfig(options) {
   const source = options || {};
   const cliArgs = parseCliArgs(source.argv || []);
   const env = source.env || process.env;
+  const mode = resolveLaunchMode(cliArgs, env);
 
   const snapshotPathRaw = firstNonEmptyString([
     cliArgs.snapshot,
@@ -221,6 +312,27 @@ function buildLauncherConfig(options) {
     env.PHASE12_RUN_DIR
   ]);
 
+  const campaignBatchLabelRaw = firstNonEmptyString([
+    cliArgs['campaign-batch-label'],
+    env.PHASE13_CAMPAIGN_BATCH_LABEL
+  ]);
+
+  const campaignTrialCountsRaw = firstNonEmptyString([
+    cliArgs['campaign-trial-counts'],
+    env.PHASE13_CAMPAIGN_TRIAL_COUNTS
+  ]);
+
+  const campaignRepeatsRaw = firstNonEmptyString([
+    cliArgs['campaign-repeats'],
+    env.PHASE13_CAMPAIGN_REPEATS,
+    '3'
+  ]);
+
+  const campaignDirRaw = firstNonEmptyString([
+    cliArgs['campaign-dir'],
+    env.PHASE13_CAMPAIGN_DIR
+  ]);
+
   const uploadToDriveRaw = firstNonEmptyString([
     cliArgs['upload-to-drive'],
     env.PHASE12_UPLOAD_TO_DRIVE,
@@ -266,10 +378,6 @@ function buildLauncherConfig(options) {
     throw new Error('worker token is required. Use --worker-token or PHASE12_WORKER_TOKEN.');
   }
 
-  if (!totalTrialsRaw) {
-    throw new Error('totalTrials is required. Use --total-trials or PHASE12_TOTAL_TRIALS.');
-  }
-
   if (!chunkTrialsRaw) {
     throw new Error('chunkTrials is required. Use --chunk-trials or PHASE12_CHUNK_TRIALS.');
   }
@@ -278,16 +386,9 @@ function buildLauncherConfig(options) {
     throw new Error('baseSeed is required. Use --base-seed or PHASE12_BASE_SEED.');
   }
 
-  const totalTrials = parseRequiredPositiveInteger(totalTrialsRaw, 'totalTrials');
   const chunkTrials = parseRequiredPositiveInteger(chunkTrialsRaw, 'chunkTrials');
   const topN = parseRequiredPositiveInteger(topNRaw, 'topN');
   const requestTimeoutMs = parseOptionalPositiveInteger(requestTimeoutMsRaw, 'requestTimeoutMs', 600000);
-
-  if (chunkTrials > totalTrials) {
-    throw new Error(
-      `chunkTrials must not exceed totalTrials. Received chunkTrials=${chunkTrials}, totalTrials=${totalTrials}`
-    );
-  }
 
   const dryRun = resolveDryRun(cliArgs, env);
   const resume = resolveResume(cliArgs, env);
@@ -296,9 +397,17 @@ function buildLauncherConfig(options) {
   const saveChunkResponses = parseBoolean(saveChunkResponsesRaw, false);
   const uploadToDrive = parseBoolean(uploadToDriveRaw, false);
   const resolvedRunDir = runDirRaw ? path.resolve(runDirRaw) : null;
+  const resolvedCampaignDir = campaignDirRaw ? path.resolve(campaignDirRaw) : null;
 
-  if (resume && !resolvedRunDir) {
+  if (resume && mode === MODE_SINGLE_RUN && !resolvedRunDir) {
     throw new Error('runDir is required when --resume is used. Use --run-dir or PHASE12_RUN_DIR.');
+  }
+
+  if (resume && mode === MODE_CAMPAIGN && !resolvedCampaignDir) {
+    throw new Error(
+      'campaignDir is required when --resume is used in campaign mode. ' +
+      'Use --campaign-dir or PHASE13_CAMPAIGN_DIR.'
+    );
   }
 
   const driveOAuthClientCredentialsFile = driveOAuthClientCredentialsFileRaw
@@ -329,7 +438,39 @@ function buildLauncherConfig(options) {
     );
   }
 
+  let totalTrials = null;
+  let campaignBatchLabel = null;
+  let campaignTrialCounts = [];
+  let campaignRepeats = null;
+
+  if (mode === MODE_SINGLE_RUN) {
+    if (!totalTrialsRaw) {
+      throw new Error('totalTrials is required. Use --total-trials or PHASE12_TOTAL_TRIALS.');
+    }
+
+    totalTrials = parseRequiredPositiveInteger(totalTrialsRaw, 'totalTrials');
+
+    if (chunkTrials > totalTrials) {
+      throw new Error(
+        `chunkTrials must not exceed totalTrials. Received chunkTrials=${chunkTrials}, totalTrials=${totalTrials}`
+      );
+    }
+  } else {
+    campaignTrialCounts = parsePositiveIntegerList(
+      campaignTrialCountsRaw,
+      'campaignTrialCounts',
+      DEFAULT_CAMPAIGN_TRIAL_COUNTS
+    );
+
+    campaignRepeats = parseOptionalPositiveInteger(campaignRepeatsRaw, 'campaignRepeats', 3);
+    campaignBatchLabel = normalizeCampaignBatchLabel(
+      campaignBatchLabelRaw,
+      buildDefaultCampaignBatchLabel(source.now)
+    );
+  }
+
   return {
+    mode,
     snapshotPath: path.resolve(snapshotPathRaw),
     workerUrl: parseWorkerUrl(workerUrlRaw),
     workerToken: workerTokenRaw,
@@ -340,6 +481,10 @@ function buildLauncherConfig(options) {
     dryRun,
     resume,
     runDir: resolvedRunDir,
+    campaignDir: resolvedCampaignDir,
+    campaignBatchLabel,
+    campaignTrialCounts,
+    campaignRepeats,
     printChunks,
     outputRootDir: path.resolve(outputRootDirRaw),
     requestTimeoutMs,
@@ -352,16 +497,22 @@ function buildLauncherConfig(options) {
     driveBenchmarkRunsFolderId: driveBenchmarkRunsFolderIdRaw || null,
     driveBenchmarkRunsFolderName: driveBenchmarkRunsFolderNameRaw,
     display: {
+      mode,
       maskedWorkerToken: maskToken(workerTokenRaw)
     }
   };
 }
 
 module.exports = {
+  DEFAULT_CAMPAIGN_TRIAL_COUNTS,
+  MODE_CAMPAIGN,
+  MODE_SINGLE_RUN,
   buildLauncherConfig,
   maskToken,
   parseBoolean,
   parseCliArgs,
   parseOptionalPositiveInteger,
-  parseRequiredPositiveInteger
+  parsePositiveIntegerList,
+  parseRequiredPositiveInteger,
+  resolveLaunchMode
 };

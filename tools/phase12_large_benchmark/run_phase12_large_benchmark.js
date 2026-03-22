@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 
+const path = require('path');
+
 const { buildLauncherConfig } = require('./launcher_config');
 const {
   loadSnapshotFile,
   buildChunkPlan,
   buildPlanFingerprint,
-  buildPlanSummary
+  buildPlanSummary,
+  buildCampaignPlan,
+  buildCampaignPlanFingerprint,
+  buildCampaignPlanSummary
 } = require('./launcher_plan');
 
 function emitJson(value, stream) {
@@ -32,12 +37,18 @@ function loadExecutionModules(options) {
     {
       key: 'consolidate',
       relativePath: './launcher_consolidate',
-      requiredExports: ['createChunkConsolidator']
+      requiredExports: ['createChunkConsolidator', 'createCampaignConsolidator']
     },
     {
       key: 'artifacts',
       relativePath: './launcher_artifacts',
-      requiredExports: ['createLocalArtifactWriter', 'buildDriveUploadArtifactSet', 'writeDriveUploadSummary']
+      requiredExports: [
+        'createLocalArtifactWriter',
+        'createCampaignArtifactWriter',
+        'buildDriveUploadArtifactSet',
+        'buildCampaignDriveUploadArtifactSet',
+        'writeDriveUploadSummary'
+      ]
     },
     {
       key: 'checkpoint',
@@ -93,20 +104,30 @@ function loadExecutionModules(options) {
   };
 }
 
-function buildExecutionMissingError(config, snapshotInfo, chunkPlan, loadResult) {
+function buildExecutionMissingError(options) {
+  const source = options || {};
+  const config = source.config;
+  const snapshotInfo = source.snapshotInfo;
+  const chunkPlan = source.chunkPlan || null;
+  const campaignPlan = source.campaignPlan || null;
+  const loadResult = source.loadResult;
+  const isCampaign = config && config.mode === 'CAMPAIGN';
+
   return {
     ok: false,
-    launcherPhase: '12F',
+    launcherPhase: isCampaign ? '13B' : '12F',
     stage: 'load_execution_modules',
     mode: config.dryRun ? 'DRY_RUN_PLAN_ONLY' : 'EXECUTE',
     message:
-      'Execution helpers for Phase 12F are not fully present yet. ' +
-      'Ensure launcher_runtime.js, launcher_http.js, launcher_consolidate.js, launcher_artifacts.js, launcher_checkpoint.js, and when upload is enabled launcher_drive_auth.js and launcher_drive_upload.js are available.',
+      isCampaign
+        ? 'Execution helpers for Phase 13B campaign mode are not fully present yet. ' +
+          'Ensure launcher_runtime.js, launcher_http.js, launcher_consolidate.js, launcher_artifacts.js, launcher_checkpoint.js, and when upload is enabled launcher_drive_auth.js and launcher_drive_upload.js are available with the Phase 13B exports.'
+        : 'Execution helpers for Phase 12F are not fully present yet. ' +
+          'Ensure launcher_runtime.js, launcher_http.js, launcher_consolidate.js, launcher_artifacts.js, launcher_checkpoint.js, and when upload is enabled launcher_drive_auth.js and launcher_drive_upload.js are available.',
     config: {
+      mode: config.mode || 'SINGLE_RUN',
       snapshotPath: snapshotInfo.file.absolutePath,
-      totalTrials: config.totalTrials,
       chunkTrials: config.chunkTrials,
-      chunkCount: chunkPlan.chunkCount,
       baseSeed: config.baseSeed,
       topN: config.topN,
       outputRootDir: config.outputRootDir,
@@ -115,6 +136,10 @@ function buildExecutionMissingError(config, snapshotInfo, chunkPlan, loadResult)
       saveChunkResponses: config.saveChunkResponses,
       resume: !!config.resume,
       runDir: config.runDir || null,
+      campaignDir: config.campaignDir || null,
+      campaignBatchLabel: config.campaignBatchLabel || null,
+      campaignRepeats: config.campaignRepeats || null,
+      campaignTrialCounts: Array.isArray(config.campaignTrialCounts) ? config.campaignTrialCounts : [],
       uploadToDrive: !!config.uploadToDrive,
       driveOAuthClientCredentialsFile: config.driveOAuthClientCredentialsFile || null,
       driveOAuthTokenFile: config.driveOAuthTokenFile || null,
@@ -122,9 +147,20 @@ function buildExecutionMissingError(config, snapshotInfo, chunkPlan, loadResult)
       driveBenchmarkRunsFolderId: config.driveBenchmarkRunsFolderId || null,
       driveBenchmarkRunsFolderName: config.driveBenchmarkRunsFolderName || null
     },
+    executionPlan: isCampaign
+      ? {
+          plannedRunCount: campaignPlan ? campaignPlan.plannedRunCount : null,
+          firstRunId: campaignPlan ? campaignPlan.firstRunId : null,
+          lastRunId: campaignPlan ? campaignPlan.lastRunId : null
+        }
+      : {
+          totalTrials: config.totalTrials,
+          chunkCount: chunkPlan ? chunkPlan.chunkCount : null
+        },
     missingModules: loadResult.missing
   };
 }
+
 
 function compareChunkWinnerRecords(left, right) {
   const leftScore = left && left.bestScore;
@@ -151,10 +187,62 @@ function compareChunkWinnerRecords(left, right) {
   return leftTrialIndex - rightTrialIndex;
 }
 
+function getTransportInvocationMode(transportSummary, transportResult) {
+  if (transportSummary && typeof transportSummary.invocationMode === 'string' && transportSummary.invocationMode) {
+    return transportSummary.invocationMode;
+  }
+
+  if (transportResult && typeof transportResult.invocationMode === 'string' && transportResult.invocationMode) {
+    return transportResult.invocationMode;
+  }
+
+  return null;
+}
+
+function getTransportMessage(transportSummary, transportResult) {
+  if (transportSummary && typeof transportSummary.message === 'string' && transportSummary.message) {
+    return transportSummary.message;
+  }
+
+  if (transportResult && typeof transportResult.message === 'string' && transportResult.message) {
+    return transportResult.message;
+  }
+
+  return null;
+}
+
+function getBestTrialScoringSummary(transportResult) {
+  const bestTrial = transportResult && transportResult.bestTrial ? transportResult.bestTrial : null;
+  const scoringSummary = bestTrial && bestTrial.scoringSummary ? bestTrial.scoringSummary : null;
+
+  if (!scoringSummary || typeof scoringSummary !== 'object') {
+    return null;
+  }
+
+  return scoringSummary;
+}
+
 function summarizeWinnerRecordForOutput(record) {
   if (!record) {
     return null;
   }
+
+  const transportSummary = record.transportSummary || null;
+  const transportResult = record.transportResult || null;
+  const scoringSummary = getBestTrialScoringSummary(transportResult);
+
+  const meanPoints = scoringSummary && typeof scoringSummary.meanPoints === 'number'
+    ? scoringSummary.meanPoints
+    : (transportSummary && typeof transportSummary.meanPoints === 'number' ? transportSummary.meanPoints : null);
+  const standardDeviation = scoringSummary && typeof scoringSummary.standardDeviation === 'number'
+    ? scoringSummary.standardDeviation
+    : (transportSummary && typeof transportSummary.standardDeviation === 'number' ? transportSummary.standardDeviation : null);
+  const range = scoringSummary && typeof scoringSummary.range === 'number'
+    ? scoringSummary.range
+    : (transportSummary && typeof transportSummary.range === 'number' ? transportSummary.range : null);
+  const totalScore = scoringSummary && typeof scoringSummary.totalScore === 'number'
+    ? scoringSummary.totalScore
+    : (typeof record.bestScore === 'number' ? record.bestScore : null);
 
   return {
     chunkNumber: record.chunk ? record.chunk.chunkNumber : null,
@@ -164,12 +252,12 @@ function summarizeWinnerRecordForOutput(record) {
     chunkSeed: record.chunk ? record.chunk.chunkSeed : null,
     bestScore: record.bestScore,
     bestTrialIndex: record.bestTrialIndex,
-    invocationMode: record.transportSummary ? record.transportSummary.invocationMode : null,
-    message: record.transportSummary ? record.transportSummary.message : null,
-    meanPoints: record.transportSummary ? record.transportSummary.meanPoints : null,
-    standardDeviation: record.transportSummary ? record.transportSummary.standardDeviation : null,
-    range: record.transportSummary ? record.transportSummary.range : null,
-    totalScore: record.bestScore
+    invocationMode: getTransportInvocationMode(transportSummary, transportResult),
+    message: getTransportMessage(transportSummary, transportResult),
+    meanPoints,
+    standardDeviation,
+    range,
+    totalScore
   };
 }
 
@@ -182,17 +270,48 @@ function summarizeFailureRecord(failureRecord) {
   };
 }
 
+function summarizeCampaignWinnerForOutput(record) {
+  if (!record) {
+    return null;
+  }
+
+  return {
+    runId: record.runId || null,
+    runNumber: typeof record.runNumber === 'number' ? record.runNumber : null,
+    trialCount: typeof record.trialCount === 'number' ? record.trialCount : null,
+    repeatIndex: typeof record.repeatIndex === 'number' ? record.repeatIndex : null,
+    bestScore: typeof record.bestScore === 'number' ? record.bestScore : null,
+    bestTrialIndex: typeof record.bestTrialIndex === 'number' ? record.bestTrialIndex : null,
+    invocationMode: record.invocationMode || null,
+    runFolderName: record.runFolderName || null,
+    artifactFileName: record.artifactFileName || null,
+    meanPoints: record.scoring && typeof record.scoring.meanPoints === 'number'
+      ? record.scoring.meanPoints
+      : null,
+    standardDeviation: record.scoring && typeof record.scoring.standardDeviation === 'number'
+      ? record.scoring.standardDeviation
+      : null,
+    range: record.scoring && typeof record.scoring.range === 'number'
+      ? record.scoring.range
+      : null
+  };
+}
+
 function summarizeSuccessExecution(execution) {
+  const transportSummary = execution.transportSummary || null;
+  const transportResult = execution.transportResult || null;
+  const bestTrial = transportResult && transportResult.bestTrial ? transportResult.bestTrial : null;
+
   return {
     chunk: execution.chunk,
-    bestScore: execution.transportSummary ? execution.transportSummary.bestScore : null,
-    bestTrialIndex: execution.transportResult
-      && execution.transportResult.bestTrial
-      && typeof execution.transportResult.bestTrial.index === 'number'
-      ? execution.transportResult.bestTrial.index
+    bestScore: transportSummary && typeof transportSummary.bestScore === 'number'
+      ? transportSummary.bestScore
+      : (bestTrial && typeof bestTrial.score === 'number' ? bestTrial.score : null),
+    bestTrialIndex: bestTrial && typeof bestTrial.index === 'number'
+      ? bestTrial.index
       : null,
-    invocationMode: execution.transportSummary ? execution.transportSummary.invocationMode : null,
-    message: execution.transportSummary ? execution.transportSummary.message : null
+    invocationMode: getTransportInvocationMode(transportSummary, transportResult),
+    message: getTransportMessage(transportSummary, transportResult)
   };
 }
 
@@ -320,6 +439,73 @@ function buildCompactSummary(config, snapshotInfo, chunkPlan, planFingerprint, s
   };
 }
 
+
+function buildCampaignCompactSummary(
+  config,
+  snapshotInfo,
+  campaignPlan,
+  planFingerprint,
+  campaignState,
+  campaignArtifactWriteResult,
+  message,
+  mode,
+  driveUpload
+) {
+  const completedCount = Number.isInteger(campaignState.completedCount) ? campaignState.completedCount : 0;
+  const failedCount = Number.isInteger(campaignState.failedCount) ? campaignState.failedCount : 0;
+  const totalPlanned = Number.isInteger(campaignState.totalPlanned) ? campaignState.totalPlanned : 0;
+  const pendingCount = Math.max(0, totalPlanned - completedCount);
+  const ok = completedCount === totalPlanned && failedCount === 0;
+
+  return {
+    ok,
+    launcherPhase: '13B',
+    mode: mode || 'EXECUTE_CAMPAIGN',
+    message,
+    planFingerprint,
+    config: {
+      mode: config.mode || 'CAMPAIGN',
+      snapshotPath: snapshotInfo.file.absolutePath,
+      campaignBatchLabel: config.campaignBatchLabel || null,
+      campaignRepeats: config.campaignRepeats || null,
+      campaignTrialCounts: Array.isArray(config.campaignTrialCounts) ? config.campaignTrialCounts.slice() : [],
+      plannedRunCount: campaignPlan.plannedRunCount,
+      chunkTrials: config.chunkTrials,
+      baseSeed: config.baseSeed,
+      topN: config.topN,
+      outputRootDir: config.outputRootDir,
+      requestTimeoutMs: config.requestTimeoutMs,
+      failFast: config.failFast,
+      saveChunkResponses: config.saveChunkResponses,
+      resume: !!config.resume,
+      campaignDir: campaignArtifactWriteResult ? campaignArtifactWriteResult.campaignDir : (config.campaignDir || null),
+      uploadToDrive: !!config.uploadToDrive,
+      driveOAuthClientCredentialsFile: config.driveOAuthClientCredentialsFile || null,
+      driveOAuthTokenFile: config.driveOAuthTokenFile || null,
+      driveRootFolderId: config.driveRootFolderId || null,
+      driveBenchmarkRunsFolderId: config.driveBenchmarkRunsFolderId || null,
+      driveBenchmarkRunsFolderName: config.driveBenchmarkRunsFolderName || null
+    },
+    snapshot: {
+      contractVersion: snapshotInfo.snapshot.contractVersion,
+      fileName: snapshotInfo.file.fileName,
+      fileSizeBytes: snapshotInfo.file.fileSizeBytes,
+      fileSha256: snapshotInfo.file.fileSha256,
+      metadata: snapshotInfo.snapshot.metadata || null
+    },
+    execution: {
+      totalPlanned,
+      completedCount,
+      okCount: Number.isInteger(campaignState.okCount) ? campaignState.okCount : 0,
+      failedCount,
+      pendingCount
+    },
+    winner: summarizeCampaignWinnerForOutput(campaignState.winnerRunRecord || null),
+    artifacts: campaignArtifactWriteResult || null,
+    driveUpload: driveUpload || null
+  };
+}
+
 async function maybeUploadToDrive(config, modules, artifactWriteResult) {
   if (!config.uploadToDrive) {
     return null;
@@ -358,6 +544,193 @@ async function maybeUploadToDrive(config, modules, artifactWriteResult) {
     ...driveUploadSummary,
     summaryPath
   };
+}
+
+
+async function maybeUploadCampaignToDrive(config, modules, campaignArtifactWriteResult, runArtifactSets) {
+  if (!config.uploadToDrive) {
+    return null;
+  }
+
+  const artifactSet = modules.artifacts.buildCampaignDriveUploadArtifactSet({
+    campaignArtifactWriteResult,
+    runArtifactSets
+  });
+  const driveAuthGateway = await modules.driveAuth.createDriveAuthGateway({ config });
+  const driveUploadResult = await modules.driveUpload.uploadFinalArtifactsToDrive({
+    driveAuthGateway,
+    config,
+    artifactSet
+  });
+
+  const driveUploadSummary = {
+    launcherPhase: '13B',
+    uploadedAtIso: new Date().toISOString(),
+    authMode: driveUploadResult.authMode || 'OAUTH_DESKTOP',
+    principalEmail: driveUploadResult.principalEmail || null,
+    principalDisplayName: driveUploadResult.principalDisplayName || null,
+    credentialsFilePath: driveUploadResult.credentialsFilePath || null,
+    tokenFilePath: driveUploadResult.tokenFilePath || null,
+    rootFolder: driveUploadResult.rootFolder || null,
+    benchmarkRunsFolder: driveUploadResult.benchmarkRunsFolder || null,
+    campaignFolder: driveUploadResult.runFolder || null,
+    uploadedFiles: Array.isArray(driveUploadResult.uploadedFiles)
+      ? driveUploadResult.uploadedFiles
+      : []
+  };
+
+  const summaryPath = modules.artifacts.writeDriveUploadSummary(
+    campaignArtifactWriteResult.campaignDir,
+    driveUploadSummary
+  );
+
+  return {
+    ...driveUploadSummary,
+    summaryPath
+  };
+}
+
+function buildCampaignRunConfig(baseConfig, runSpec, runsDir) {
+  return {
+    ...baseConfig,
+    mode: 'SINGLE_RUN',
+    totalTrials: runSpec.trialCount,
+    baseSeed: runSpec.baseSeedForRun,
+    runDir: path.join(runsDir, runSpec.runId),
+    uploadToDrive: false
+  };
+}
+
+function buildCampaignRunRecord(runSpec, runConfig, snapshotInfo, runSummary, runtimeMs) {
+  const globalBest = runSummary && runSummary.globalBest ? runSummary.globalBest : null;
+  const failureRecord = runSummary && Array.isArray(runSummary.failures) && runSummary.failures.length > 0
+    ? runSummary.failures[0]
+    : null;
+  const runFolderName = runSummary && runSummary.artifacts
+    ? (runSummary.artifacts.runFolderName || path.basename(runSummary.artifacts.runDir || runConfig.runDir))
+    : path.basename(runConfig.runDir);
+  const artifactFileName = runSummary && runSummary.ok && runSummary.artifacts
+    ? 'global_best.transport_trial_result_v1.json'
+    : null;
+
+  return {
+    runId: runSpec.runId,
+    runNumber: runSpec.runNumber,
+    trialCount: runSpec.trialCount,
+    repeatIndex: runSpec.repeatIndex,
+    ok: !!(runSummary && runSummary.ok),
+    runtimeMs,
+    runtimeSec: typeof runtimeMs === 'number' ? runtimeMs / 1000 : null,
+    seed: runSpec.baseSeedForRun,
+    bestScore: globalBest && typeof globalBest.bestScore === 'number' ? globalBest.bestScore : null,
+    bestTrialIndex: globalBest && typeof globalBest.bestTrialIndex === 'number' ? globalBest.bestTrialIndex : null,
+    invocationMode: globalBest ? globalBest.invocationMode || null : null,
+    runFolderName,
+    artifactFileName,
+    snapshotFileName: snapshotInfo.file.fileName,
+    snapshotFileSha256: snapshotInfo.file.fileSha256,
+    snapshotContractVersion: snapshotInfo.snapshot.contractVersion,
+    scoring: globalBest ? {
+      meanPoints: typeof globalBest.meanPoints === 'number' ? globalBest.meanPoints : null,
+      standardDeviation: typeof globalBest.standardDeviation === 'number' ? globalBest.standardDeviation : null,
+      range: typeof globalBest.range === 'number' ? globalBest.range : null,
+      totalScore: typeof globalBest.totalScore === 'number' ? globalBest.totalScore : null
+    } : null,
+    summaryMessage: runSummary && runSummary.message ? runSummary.message : null,
+    failureMessage: failureRecord && failureRecord.message
+      ? failureRecord.message
+      : (runSummary && !runSummary.ok ? runSummary.message || 'Campaign run failed.' : null)
+  };
+}
+
+async function executeCampaignPlan(config, snapshotInfo, campaignPlan, planFingerprint, modules) {
+  const campaignWriter = modules.artifacts.createCampaignArtifactWriter({
+    config,
+    snapshotInfo,
+    campaignPlan,
+    planFingerprint
+  });
+
+  const campaignInit = campaignWriter.initializeCampaign();
+  const campaignConsolidator = modules.consolidate.createCampaignConsolidator({
+    totalPlanned: campaignPlan.plannedRunCount
+  });
+  const runArtifactSets = [];
+
+  campaignWriter.writeCampaignReport(campaignConsolidator.getState(), {
+    launcherPhase: '13B',
+    planFingerprint
+  });
+
+  for (const runSpec of campaignPlan.runs) {
+    const runConfig = buildCampaignRunConfig(config, runSpec, campaignInit.runsDir);
+    const runChunkPlan = buildChunkPlan(runConfig);
+    const runPlanFingerprint = buildPlanFingerprint({
+      snapshotInfo,
+      config: runConfig
+    });
+
+    const startedAtMs = Date.now();
+    const runSummary = await executeChunkPlan(
+      runConfig,
+      snapshotInfo,
+      runChunkPlan,
+      runPlanFingerprint,
+      modules
+    );
+    const runtimeMs = Date.now() - startedAtMs;
+
+    const runRecord = buildCampaignRunRecord(
+      runSpec,
+      runConfig,
+      snapshotInfo,
+      runSummary,
+      runtimeMs
+    );
+
+    campaignConsolidator.recordRunResult(runRecord);
+
+    if (config.uploadToDrive && runSummary && runSummary.ok && runSummary.artifacts) {
+      runArtifactSets.push(
+        modules.artifacts.buildDriveUploadArtifactSet(runSummary.artifacts)
+      );
+    }
+
+    campaignWriter.writeCampaignReport(campaignConsolidator.getState(), {
+      launcherPhase: '13B',
+      planFingerprint
+    });
+  }
+
+  const campaignState = campaignConsolidator.getState();
+  const campaignArtifactWriteResult = campaignWriter.buildCampaignArtifactWriteResult();
+  const driveUpload = await maybeUploadCampaignToDrive(
+    config,
+    modules,
+    campaignArtifactWriteResult,
+    runArtifactSets
+  );
+
+  campaignWriter.writeCampaignReport(campaignState, {
+    launcherPhase: '13B',
+    planFingerprint
+  });
+
+  const message = campaignState.failedCount > 0
+    ? 'Phase 13 campaign completed with one or more failed runs. Review benchmark_campaign_report_v1.json for details.'
+    : 'Phase 13 campaign completed successfully.';
+
+  return buildCampaignCompactSummary(
+    config,
+    snapshotInfo,
+    campaignPlan,
+    planFingerprint,
+    campaignState,
+    campaignArtifactWriteResult,
+    message,
+    'EXECUTE_CAMPAIGN',
+    driveUpload
+  );
 }
 
 async function executeChunkPlan(config, snapshotInfo, chunkPlan, planFingerprint, modules) {
@@ -535,29 +908,69 @@ async function main() {
   });
 
   const snapshotInfo = loadSnapshotFile(config.snapshotPath);
-  const chunkPlan = buildChunkPlan(config);
-  const planFingerprint = buildPlanFingerprint({ snapshotInfo, config });
-  const dryRunSummary = buildPlanSummary(config, snapshotInfo, chunkPlan, { planFingerprint });
+  let dryRunSummary;
+  let loadResult;
+  let finalSummary;
 
-  if (config.dryRun) {
-    emitJson(dryRunSummary);
-    return;
+  if (config.mode === 'CAMPAIGN') {
+    const campaignPlan = buildCampaignPlan(config, snapshotInfo);
+    const planFingerprint = buildCampaignPlanFingerprint({ snapshotInfo, config });
+    dryRunSummary = buildCampaignPlanSummary(config, snapshotInfo, campaignPlan, { planFingerprint });
+
+    if (config.dryRun) {
+      emitJson(dryRunSummary);
+      return;
+    }
+
+    loadResult = loadExecutionModules({ includeDriveModules: config.uploadToDrive });
+    if (!loadResult.ok) {
+      emitJson(buildExecutionMissingError({
+        config,
+        snapshotInfo,
+        campaignPlan,
+        loadResult
+      }), process.stderr);
+      process.exit(1);
+      return;
+    }
+
+    finalSummary = await executeCampaignPlan(
+      config,
+      snapshotInfo,
+      campaignPlan,
+      planFingerprint,
+      loadResult.modules
+    );
+  } else {
+    const chunkPlan = buildChunkPlan(config);
+    const planFingerprint = buildPlanFingerprint({ snapshotInfo, config });
+    dryRunSummary = buildPlanSummary(config, snapshotInfo, chunkPlan, { planFingerprint });
+
+    if (config.dryRun) {
+      emitJson(dryRunSummary);
+      return;
+    }
+
+    loadResult = loadExecutionModules({ includeDriveModules: config.uploadToDrive });
+    if (!loadResult.ok) {
+      emitJson(buildExecutionMissingError({
+        config,
+        snapshotInfo,
+        chunkPlan,
+        loadResult
+      }), process.stderr);
+      process.exit(1);
+      return;
+    }
+
+    finalSummary = await executeChunkPlan(
+      config,
+      snapshotInfo,
+      chunkPlan,
+      planFingerprint,
+      loadResult.modules
+    );
   }
-
-  const loadResult = loadExecutionModules({ includeDriveModules: config.uploadToDrive });
-  if (!loadResult.ok) {
-    emitJson(buildExecutionMissingError(config, snapshotInfo, chunkPlan, loadResult), process.stderr);
-    process.exit(1);
-    return;
-  }
-
-  const finalSummary = await executeChunkPlan(
-    config,
-    snapshotInfo,
-    chunkPlan,
-    planFingerprint,
-    loadResult.modules
-  );
 
   emitJson(finalSummary, finalSummary.ok ? process.stdout : process.stderr);
 
@@ -569,7 +982,7 @@ async function main() {
 main().catch((error) => {
   emitJson({
     ok: false,
-    launcherPhase: '12F',
+    launcherPhase: '13B',
     stage: 'unhandled_exception',
     message: error && error.message ? error.message : String(error)
   }, process.stderr);

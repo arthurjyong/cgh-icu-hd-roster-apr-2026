@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+const CAMPAIGN_PLAN_FINGERPRINT_VERSION = 'phase13_campaign_plan_fingerprint_v1';
+
 function computeSha256Hex(text) {
   return crypto.createHash('sha256').update(String(text), 'utf8').digest('hex');
 }
@@ -60,6 +62,34 @@ function deriveChunkSeed(baseSeed, chunkIndex, startTrialIndex, chunkTrialCount)
     `chunk=${chunkIndex + 1}`,
     `start=${startTrialIndex}`,
     `count=${chunkTrialCount}`
+  ].join('|');
+}
+
+function zeroPadInteger(value, width) {
+  return String(value).padStart(width, '0');
+}
+
+function deriveCampaignRunId(trialCount, repeatIndex) {
+  const normalizedTrialCount = Number(trialCount);
+  const normalizedRepeatIndex = Number(repeatIndex);
+
+  if (!Number.isInteger(normalizedTrialCount) || normalizedTrialCount < 1) {
+    throw new Error(`trialCount must be a positive integer to derive a campaign run id. Received: ${trialCount}`);
+  }
+
+  if (!Number.isInteger(normalizedRepeatIndex) || normalizedRepeatIndex < 1) {
+    throw new Error(`repeatIndex must be a positive integer to derive a campaign run id. Received: ${repeatIndex}`);
+  }
+
+  return `tc_${zeroPadInteger(normalizedTrialCount, 7)}_r${zeroPadInteger(normalizedRepeatIndex, 2)}`;
+}
+
+function deriveCampaignRunSeed(baseSeed, trialCount, repeatIndex) {
+  return [
+    'phase13',
+    String(baseSeed),
+    `trialCount=${trialCount}`,
+    `repeat=${repeatIndex}`
   ].join('|');
 }
 
@@ -124,6 +154,116 @@ function buildSnapshotSummary(snapshotInfo) {
   };
 }
 
+
+function buildCampaignPlanFingerprint(options) {
+  const source = options || {};
+  const snapshotInfo = source.snapshotInfo;
+  const config = source.config;
+
+  if (!snapshotInfo || !snapshotInfo.file || !snapshotInfo.file.fileSha256) {
+    throw new Error('snapshotInfo.file.fileSha256 is required to build a campaign plan fingerprint.');
+  }
+
+  if (!config) {
+    throw new Error('config is required to build a campaign plan fingerprint.');
+  }
+
+  if (!Array.isArray(config.campaignTrialCounts) || !config.campaignTrialCounts.length) {
+    throw new Error('config.campaignTrialCounts is required to build a campaign plan fingerprint.');
+  }
+
+  if (!Number.isInteger(config.campaignRepeats) || config.campaignRepeats < 1) {
+    throw new Error('config.campaignRepeats must be a positive integer to build a campaign plan fingerprint.');
+  }
+
+  return computeSha256Hex(JSON.stringify({
+    fingerprintVersion: CAMPAIGN_PLAN_FINGERPRINT_VERSION,
+    contractVersion: snapshotInfo.snapshot ? snapshotInfo.snapshot.contractVersion : null,
+    snapshotFileSha256: snapshotInfo.file.fileSha256,
+    campaignBatchLabel: config.campaignBatchLabel || null,
+    campaignTrialCounts: config.campaignTrialCounts,
+    campaignRepeats: config.campaignRepeats,
+    chunkTrials: config.chunkTrials,
+    baseSeed: String(config.baseSeed),
+    topN: config.topN
+  }));
+}
+
+function buildCampaignPlan(config, snapshotInfo) {
+  if (!config || typeof config !== 'object') {
+    throw new Error('config is required to build a campaign plan.');
+  }
+
+  if (!snapshotInfo || !snapshotInfo.file || !snapshotInfo.file.fileSha256) {
+    throw new Error('snapshotInfo with fileSha256 is required to build a campaign plan.');
+  }
+
+  if (!Array.isArray(config.campaignTrialCounts) || !config.campaignTrialCounts.length) {
+    throw new Error('config.campaignTrialCounts must contain at least one trial count.');
+  }
+
+  if (!Number.isInteger(config.campaignRepeats) || config.campaignRepeats < 1) {
+    throw new Error('config.campaignRepeats must be a positive integer.');
+  }
+
+  if (!Number.isInteger(config.chunkTrials) || config.chunkTrials < 1) {
+    throw new Error('config.chunkTrials must be a positive integer.');
+  }
+
+  if (config.baseSeed === undefined || config.baseSeed === null || config.baseSeed === '') {
+    throw new Error('config.baseSeed is required to build a campaign plan.');
+  }
+
+  const runs = [];
+  let globalRunIndex = 0;
+
+  for (let trialIndex = 0; trialIndex < config.campaignTrialCounts.length; trialIndex++) {
+    const trialCount = Number(config.campaignTrialCounts[trialIndex]);
+
+    if (!Number.isInteger(trialCount) || trialCount < 1) {
+      throw new Error(
+        `campaignTrialCounts[${trialIndex}] must be a positive integer. Received: ${config.campaignTrialCounts[trialIndex]}`
+      );
+    }
+
+    for (let repeatIndex = 1; repeatIndex <= config.campaignRepeats; repeatIndex++) {
+      globalRunIndex += 1;
+
+      const runId = deriveCampaignRunId(trialCount, repeatIndex);
+      const baseSeedForRun = deriveCampaignRunSeed(config.baseSeed, trialCount, repeatIndex);
+
+      runs.push({
+        runIndex: globalRunIndex - 1,
+        runNumber: globalRunIndex,
+        runId,
+        trialCount,
+        repeatIndex,
+        baseSeedForRun,
+        chunkTrials: config.chunkTrials,
+        topN: config.topN,
+        plannedChunkCount: Math.ceil(trialCount / config.chunkTrials)
+      });
+    }
+  }
+
+  const firstRun = runs.length > 0 ? runs[0] : null;
+  const lastRun = runs.length > 0 ? runs[runs.length - 1] : null;
+
+  return {
+    campaignBatchLabel: config.campaignBatchLabel || null,
+    campaignRepeats: config.campaignRepeats,
+    campaignTrialCounts: config.campaignTrialCounts.slice(),
+    plannedRunCount: runs.length,
+    chunkTrials: config.chunkTrials,
+    topN: config.topN,
+    snapshotFileName: snapshotInfo.file.fileName,
+    snapshotFileSha256: snapshotInfo.file.fileSha256,
+    firstRunId: firstRun ? firstRun.runId : null,
+    lastRunId: lastRun ? lastRun.runId : null,
+    runs
+  };
+}
+
 function buildPlanFingerprint(options) {
   const source = options || {};
   const snapshotInfo = source.snapshotInfo;
@@ -145,6 +285,45 @@ function buildPlanFingerprint(options) {
     chunkTrials: config.chunkTrials,
     baseSeed: String(config.baseSeed)
   }));
+}
+
+
+function buildCampaignPlanSummary(config, snapshotInfo, campaignPlan, options) {
+  const source = options || {};
+  const firstRun = campaignPlan.runs.length > 0 ? campaignPlan.runs[0] : null;
+  const lastRun = campaignPlan.runs.length > 0 ? campaignPlan.runs[campaignPlan.runs.length - 1] : null;
+
+  return {
+    launcherPhase: '13B',
+    mode: 'DRY_RUN_CAMPAIGN_PLAN_ONLY',
+    message: 'Phase 13 launcher built campaign plan only. No worker call has been made.',
+    worker: {
+      runRandomTrialsUrl: `${config.workerUrl}/run-random-trials`,
+      tokenPreview: config.display.maskedWorkerToken
+    },
+    config: {
+      snapshotPath: snapshotInfo.file.absolutePath,
+      campaignBatchLabel: config.campaignBatchLabel || null,
+      campaignRepeats: config.campaignRepeats,
+      campaignTrialCounts: Array.isArray(config.campaignTrialCounts)
+        ? config.campaignTrialCounts.slice()
+        : [],
+      plannedRunCount: campaignPlan.plannedRunCount,
+      chunkTrials: config.chunkTrials,
+      baseSeed: config.baseSeed,
+      topN: config.topN,
+      resume: !!config.resume,
+      campaignDir: config.campaignDir || null
+    },
+    planFingerprint: source.planFingerprint || null,
+    snapshot: buildSnapshotSummary(snapshotInfo),
+    seedSchedule: {
+      strategy: 'human_readable_string_seed_per_run',
+      firstRunSeed: firstRun ? firstRun.baseSeedForRun : null,
+      lastRunSeed: lastRun ? lastRun.baseSeedForRun : null
+    },
+    runs: config.printChunks ? campaignPlan.runs : undefined
+  };
 }
 
 function buildPlanSummary(config, snapshotInfo, chunkPlan, options) {
@@ -182,11 +361,16 @@ function buildPlanSummary(config, snapshotInfo, chunkPlan, options) {
 }
 
 module.exports = {
+  buildCampaignPlan,
+  buildCampaignPlanFingerprint,
+  buildCampaignPlanSummary,
   buildChunkPlan,
   buildPlanFingerprint,
   buildPlanSummary,
   buildSnapshotSummary,
   computeSha256Hex,
+  deriveCampaignRunId,
+  deriveCampaignRunSeed,
   deriveChunkSeed,
   loadSnapshotFile
 };

@@ -3,6 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 
+const CAMPAIGN_REPORT_CONTRACT_VERSION = 'benchmark_campaign_report_v1';
+
 function sanitizeFileNamePart(value, fallbackValue) {
   if (typeof value !== 'string' || !value.trim()) {
     return fallbackValue;
@@ -55,6 +57,19 @@ function buildRunFolderName(config) {
   return `${timestampPart}__t${config.totalTrials}__c${config.chunkTrials}__seed-${seedPart}`;
 }
 
+function buildCampaignFolderName(options) {
+  const source = options || {};
+  const config = source.config || {};
+  const snapshotInfo = source.snapshotInfo || {};
+  const timestampPart = formatLocalTimestamp(new Date());
+  const batchLabelPart = sanitizeFileNamePart(config.campaignBatchLabel, 'campaign');
+  const snapshotSha = snapshotInfo.file && typeof snapshotInfo.file.fileSha256 === 'string'
+    ? snapshotInfo.file.fileSha256.slice(0, 8)
+    : 'snapshot';
+
+  return `${timestampPart}__batch-${batchLabelPart}__snap-${snapshotSha}`;
+}
+
 function buildManifestBase(options) {
   const config = options.config;
   const snapshotInfo = options.snapshotInfo;
@@ -90,6 +105,65 @@ function buildManifestBase(options) {
       fileSha256: snapshotInfo.file.fileSha256,
       metadata: snapshotInfo.snapshot.metadata || null
     }
+  };
+}
+
+
+function buildCampaignReportDocument(options) {
+  const source = options || {};
+  const config = source.config || {};
+  const snapshotInfo = source.snapshotInfo || {};
+  const campaignPlan = source.campaignPlan || {};
+  const campaignState = source.campaignState || {};
+
+  const winnerRunRecord = campaignState.winnerRunRecord || null;
+  const runs = Array.isArray(campaignState.runs) ? campaignState.runs : [];
+
+  return {
+    contractVersion: CAMPAIGN_REPORT_CONTRACT_VERSION,
+    launcherPhase: source.launcherPhase || '13B',
+    generatedAtIso: new Date().toISOString(),
+    planFingerprint: source.planFingerprint || null,
+    campaign: {
+      batchLabel: config.campaignBatchLabel || null,
+      snapshotPath: snapshotInfo.file ? snapshotInfo.file.absolutePath : null,
+      snapshotFileName: snapshotInfo.file ? snapshotInfo.file.fileName : null,
+      snapshotFileSha256: snapshotInfo.file ? snapshotInfo.file.fileSha256 : null,
+      snapshotContractVersion: snapshotInfo.snapshot ? snapshotInfo.snapshot.contractVersion : null,
+      campaignRepeats: config.campaignRepeats || null,
+      campaignTrialCounts: Array.isArray(config.campaignTrialCounts)
+        ? config.campaignTrialCounts.slice()
+        : [],
+      plannedRunCount: Number.isInteger(campaignPlan.plannedRunCount)
+        ? campaignPlan.plannedRunCount
+        : (Array.isArray(campaignPlan.runs) ? campaignPlan.runs.length : 0),
+      chunkTrials: config.chunkTrials || null,
+      topN: config.topN || null,
+      baseSeed: config.baseSeed || null,
+      uploadToDrive: !!config.uploadToDrive,
+      driveRootFolderId: config.driveRootFolderId || null,
+      driveBenchmarkRunsFolderId: config.driveBenchmarkRunsFolderId || null,
+      driveBenchmarkRunsFolderName: config.driveBenchmarkRunsFolderName || null,
+      campaignDir: source.campaignDir || null,
+      runsDir: source.runsDir || null
+    },
+    summary: {
+      totalPlanned: Number.isInteger(campaignState.totalPlanned) ? campaignState.totalPlanned : 0,
+      completedCount: Number.isInteger(campaignState.completedCount) ? campaignState.completedCount : 0,
+      okCount: Number.isInteger(campaignState.okCount) ? campaignState.okCount : 0,
+      failedCount: Number.isInteger(campaignState.failedCount) ? campaignState.failedCount : 0
+    },
+    winner: winnerRunRecord ? {
+      runId: winnerRunRecord.runId || null,
+      runNumber: Number.isInteger(winnerRunRecord.runNumber) ? winnerRunRecord.runNumber : null,
+      trialCount: Number.isInteger(winnerRunRecord.trialCount) ? winnerRunRecord.trialCount : null,
+      repeatIndex: Number.isInteger(winnerRunRecord.repeatIndex) ? winnerRunRecord.repeatIndex : null,
+      bestScore: typeof winnerRunRecord.bestScore === 'number' ? winnerRunRecord.bestScore : null,
+      bestTrialIndex: Number.isInteger(winnerRunRecord.bestTrialIndex) ? winnerRunRecord.bestTrialIndex : null,
+      runFolderName: winnerRunRecord.runFolderName || null,
+      artifactFileName: winnerRunRecord.artifactFileName || null
+    } : null,
+    runs
   };
 }
 
@@ -202,12 +276,204 @@ function buildDriveUploadArtifactSet(artifactWriteResult) {
   };
 }
 
+
+function buildCampaignDriveUploadArtifactSet(options) {
+  const source = options || {};
+  const campaignArtifactWriteResult = source.campaignArtifactWriteResult || source;
+  const runArtifactSets = Array.isArray(source.runArtifactSets)
+    ? source.runArtifactSets
+    : [];
+
+  if (!campaignArtifactWriteResult || typeof campaignArtifactWriteResult !== 'object') {
+    throw new Error('campaignArtifactWriteResult is required to build campaign Drive upload artifact set.');
+  }
+
+  const campaignDir = campaignArtifactWriteResult.campaignDir;
+  const campaignFolderName = campaignArtifactWriteResult.campaignFolderName;
+
+  if (typeof campaignDir !== 'string' || !campaignDir.trim()) {
+    throw new Error('campaignArtifactWriteResult.campaignDir is required.');
+  }
+
+  if (typeof campaignFolderName !== 'string' || !campaignFolderName.trim()) {
+    throw new Error('campaignArtifactWriteResult.campaignFolderName is required.');
+  }
+
+  const files = [];
+
+  function pushFile(localPath, relativePath, mimeType) {
+    if (!localPath) {
+      return;
+    }
+
+    const absolutePath = path.resolve(localPath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new Error(`Expected campaign artifact file not found: ${absolutePath}`);
+    }
+
+    files.push({
+      localPath: absolutePath,
+      relativePath,
+      mimeType: mimeType || 'application/json'
+    });
+  }
+
+  pushFile(
+    campaignArtifactWriteResult.campaignReportPath,
+    'benchmark_campaign_report_v1.json'
+  );
+
+  runArtifactSets.forEach((runArtifactSet, index) => {
+    if (!runArtifactSet || typeof runArtifactSet !== 'object') {
+      throw new Error(`runArtifactSets[${index}] must be an object.`);
+    }
+
+    if (typeof runArtifactSet.runFolderName !== 'string' || !runArtifactSet.runFolderName.trim()) {
+      throw new Error(`runArtifactSets[${index}].runFolderName is required.`);
+    }
+
+    const runFiles = Array.isArray(runArtifactSet.files) ? runArtifactSet.files : [];
+    runFiles.forEach((file, fileIndex) => {
+      if (!file || typeof file !== 'object') {
+        throw new Error(`runArtifactSets[${index}].files[${fileIndex}] must be an object.`);
+      }
+
+      if (typeof file.relativePath !== 'string' || !file.relativePath.trim()) {
+        throw new Error(`runArtifactSets[${index}].files[${fileIndex}].relativePath is required.`);
+      }
+
+      pushFile(
+        file.localPath,
+        path.posix.join('runs', runArtifactSet.runFolderName, file.relativePath),
+        file.mimeType || 'application/json'
+      );
+    });
+  });
+
+  return {
+    runDir: path.resolve(campaignDir),
+    runFolderName: campaignFolderName,
+    files
+  };
+}
+
 function writeDriveUploadSummary(runDir, uploadSummary) {
   const resolvedRunDir = path.resolve(runDir);
   ensureDir(resolvedRunDir);
   const summaryPath = path.join(resolvedRunDir, 'drive_upload_summary.json');
   writeJsonFile(summaryPath, uploadSummary || {});
   return summaryPath;
+}
+
+
+function createCampaignArtifactWriter(options) {
+  const source = options || {};
+  const config = source.config || {};
+  const snapshotInfo = source.snapshotInfo || {};
+  const campaignPlan = source.campaignPlan || {};
+  const planFingerprint = source.planFingerprint || null;
+  const outputRootDir = path.resolve(config.outputRootDir || path.join(process.cwd(), 'tmp', 'phase13_campaigns'));
+  const campaignDir = config.campaignDir
+    ? path.resolve(config.campaignDir)
+    : path.join(outputRootDir, buildCampaignFolderName({ config, snapshotInfo }));
+  const campaignFolderName = path.basename(campaignDir);
+  const runsDir = path.join(campaignDir, 'runs');
+  const paths = {
+    outputRootDir,
+    campaignDir,
+    campaignFolderName,
+    runsDir,
+    campaignReportPath: path.join(campaignDir, 'benchmark_campaign_report_v1.json'),
+    driveUploadSummaryPath: path.join(campaignDir, 'drive_upload_summary.json'),
+    campaignStartedPath: path.join(campaignDir, 'campaign_started.json')
+  };
+
+  let initialized = false;
+
+  function initializeCampaign() {
+    if (!initialized) {
+      ensureDir(campaignDir);
+      ensureDir(runsDir);
+      initialized = true;
+    }
+
+    if (!fs.existsSync(paths.campaignStartedPath)) {
+      writeJsonFile(paths.campaignStartedPath, {
+        launcherPhase: '13B',
+        startedAtIso: new Date().toISOString(),
+        planFingerprint,
+        campaignDir,
+        runsDir,
+        campaignBatchLabel: config.campaignBatchLabel || null,
+        snapshot: {
+          contractVersion: snapshotInfo.snapshot ? snapshotInfo.snapshot.contractVersion : null,
+          fileName: snapshotInfo.file ? snapshotInfo.file.fileName : null,
+          fileSizeBytes: snapshotInfo.file ? snapshotInfo.file.fileSizeBytes : null,
+          fileSha256: snapshotInfo.file ? snapshotInfo.file.fileSha256 : null
+        },
+        config: {
+          campaignRepeats: config.campaignRepeats || null,
+          campaignTrialCounts: Array.isArray(config.campaignTrialCounts)
+            ? config.campaignTrialCounts.slice()
+            : [],
+          chunkTrials: config.chunkTrials || null,
+          topN: config.topN || null,
+          baseSeed: config.baseSeed || null,
+          uploadToDrive: !!config.uploadToDrive
+        },
+        plannedRunCount: Number.isInteger(campaignPlan.plannedRunCount)
+          ? campaignPlan.plannedRunCount
+          : (Array.isArray(campaignPlan.runs) ? campaignPlan.runs.length : 0)
+      });
+    }
+
+    return {
+      ok: true,
+      ...paths
+    };
+  }
+
+  function writeCampaignReport(campaignState, extraOptions) {
+    const sourceOptions = extraOptions || {};
+    initializeCampaign();
+
+    const reportDocument = buildCampaignReportDocument({
+      launcherPhase: sourceOptions.launcherPhase || '13B',
+      config,
+      snapshotInfo,
+      campaignPlan,
+      campaignState,
+      planFingerprint: sourceOptions.planFingerprint || planFingerprint,
+      campaignDir,
+      runsDir
+    });
+
+    writeJsonFile(paths.campaignReportPath, reportDocument);
+
+    return {
+      ok: true,
+      campaignReportPath: paths.campaignReportPath,
+      campaignDir,
+      campaignFolderName,
+      runsDir
+    };
+  }
+
+  function buildCampaignArtifactWriteResult() {
+    initializeCampaign();
+    return {
+      ok: true,
+      ...paths
+    };
+  }
+
+  return {
+    initializeCampaign,
+    writeCampaignReport,
+    buildCampaignArtifactWriteResult,
+    buildCampaignDriveUploadArtifactSet,
+    writeDriveUploadSummary
+  };
 }
 
 function createLocalArtifactWriter(options) {
@@ -454,7 +720,12 @@ function createLocalArtifactWriter(options) {
 }
 
 module.exports = {
+  CAMPAIGN_REPORT_CONTRACT_VERSION,
+  buildCampaignDriveUploadArtifactSet,
+  buildCampaignFolderName,
+  buildCampaignReportDocument,
   buildDriveUploadArtifactSet,
+  createCampaignArtifactWriter,
   createLocalArtifactWriter,
   sanitizeFileNamePart,
   summarizeChunkFailure,

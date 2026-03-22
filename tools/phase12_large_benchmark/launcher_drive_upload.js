@@ -71,6 +71,60 @@ async function createDriveFolder(drive, parentFolderId, folderName) {
   return response.data;
 }
 
+async function resolveOrCreateChildFolderByName(drive, parentFolderId, folderName) {
+  const existing = await listChildFoldersByName(drive, parentFolderId, folderName);
+
+  if (existing.length > 1) {
+    throw new Error(
+      `Multiple Drive folders named ${folderName} were found under parent folder ID ${parentFolderId}.`
+    );
+  }
+
+  if (existing.length === 1) {
+    return existing[0];
+  }
+
+  return createDriveFolder(drive, parentFolderId, folderName);
+}
+
+async function resolveNestedFolderPath(drive, rootFolder, relativeFolderPath, folderCache) {
+  const cache = folderCache || new Map();
+  const normalizedRelativeFolderPath = String(relativeFolderPath || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .join('/');
+
+  if (!normalizedRelativeFolderPath) {
+    return rootFolder;
+  }
+
+  const cacheKey = `${rootFolder.id}:${normalizedRelativeFolderPath}`;
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  const segments = normalizedRelativeFolderPath.split('/').filter(Boolean);
+  let currentFolder = rootFolder;
+  let traversedPath = '';
+
+  for (const segment of segments) {
+    traversedPath = traversedPath ? `${traversedPath}/${segment}` : segment;
+    const segmentCacheKey = `${rootFolder.id}:${traversedPath}`;
+
+    if (cache.has(segmentCacheKey)) {
+      currentFolder = cache.get(segmentCacheKey);
+      continue;
+    }
+
+    currentFolder = await resolveOrCreateChildFolderByName(drive, currentFolder.id, segment);
+    cache.set(segmentCacheKey, currentFolder);
+  }
+
+  cache.set(cacheKey, currentFolder);
+  return currentFolder;
+}
+
 async function resolveBenchmarkRunsFolder(drive, config) {
   const rootFolder = await getDriveFileOrThrow(
     drive,
@@ -202,35 +256,32 @@ async function uploadFinalArtifactsToDrive(options) {
     artifactSet.runFolderName
   );
 
-  const createdFolders = {
-    topChunksFolder: null
-  };
-
+  const folderCache = new Map();
   const uploadedFiles = [];
 
   for (const fileDescriptor of artifactSet.files) {
     const relativePath = String(fileDescriptor.relativePath || '').replace(/\\/g, '/');
     const pathParts = relativePath.split('/').filter(Boolean);
 
-    let parentFolderId = runFolder.id;
-
-    if (pathParts.length > 1) {
-      const firstSegment = pathParts[0];
-      if (firstSegment !== 'top_chunks') {
-        throw new Error(`Unsupported Drive relative path segment: ${relativePath}`);
-      }
-
-      if (!createdFolders.topChunksFolder) {
-        createdFolders.topChunksFolder = await createDriveFolder(drive, runFolder.id, 'top_chunks');
-      }
-
-      parentFolderId = createdFolders.topChunksFolder.id;
+    if (pathParts.length === 0) {
+      throw new Error(`artifactSet file has empty relativePath: ${relativePath}`);
     }
+
+    const relativeFolderPath = pathParts.length > 1
+      ? pathParts.slice(0, pathParts.length - 1).join('/')
+      : '';
+
+    const parentFolder = await resolveNestedFolderPath(
+      drive,
+      runFolder,
+      relativeFolderPath,
+      folderCache
+    );
 
     const driveFile = await uploadFile(drive, {
       localPath: fileDescriptor.localPath,
-      parentFolderId,
-      fileName: pathParts.length > 0 ? pathParts[pathParts.length - 1] : path.basename(fileDescriptor.localPath),
+      parentFolderId: parentFolder.id,
+      fileName: pathParts[pathParts.length - 1],
       mimeType: fileDescriptor.mimeType || 'application/json'
     });
 
@@ -239,7 +290,7 @@ async function uploadFinalArtifactsToDrive(options) {
       localPath: path.resolve(fileDescriptor.localPath),
       driveFileId: driveFile.id,
       driveFileName: driveFile.name,
-      parentFolderId,
+      parentFolderId: parentFolder.id,
       size: driveFile.size || null
     });
   }
@@ -276,6 +327,8 @@ module.exports = {
   getDriveFileOrThrow,
   listChildFoldersByName,
   resolveBenchmarkRunsFolder,
+  resolveNestedFolderPath,
+  resolveOrCreateChildFolderByName,
   uploadFile,
   uploadFinalArtifactsToDrive
 };
