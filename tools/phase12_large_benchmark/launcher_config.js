@@ -55,6 +55,36 @@ function parseRequiredPositiveInteger(rawValue, fieldName) {
   return value;
 }
 
+function parseOptionalPositiveInteger(rawValue, fieldName, defaultValue) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return defaultValue;
+  }
+
+  return parseRequiredPositiveInteger(rawValue, fieldName);
+}
+
+function parseBoolean(rawValue, defaultValue) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return defaultValue;
+  }
+
+  if (typeof rawValue === 'boolean') {
+    return rawValue;
+  }
+
+  const normalized = String(rawValue).trim().toLowerCase();
+
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  throw new Error(`Boolean value expected. Received: ${rawValue}`);
+}
+
 function parseWorkerUrl(rawValue) {
   let parsed;
 
@@ -81,6 +111,26 @@ function maskToken(token) {
   }
 
   return `${token.slice(0, 4)}***${token.slice(-4)}`;
+}
+
+function resolveDryRun(cliArgs, env) {
+  if (Object.prototype.hasOwnProperty.call(cliArgs, 'execute')) {
+    return false;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(cliArgs, 'dry-run')) {
+    return parseBoolean(cliArgs['dry-run'], true);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(env, 'PHASE12_DRY_RUN')) {
+    return parseBoolean(env.PHASE12_DRY_RUN, true);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(env, 'PHASE12_EXECUTE')) {
+    return !parseBoolean(env.PHASE12_EXECUTE, false);
+  }
+
+  return true;
 }
 
 function buildLauncherConfig(options) {
@@ -130,6 +180,30 @@ function buildLauncherConfig(options) {
     'true'
   ]);
 
+  const outputRootDirRaw = firstNonEmptyString([
+    cliArgs['output-root-dir'],
+    env.PHASE12_OUTPUT_ROOT_DIR,
+    path.join(process.cwd(), 'tmp', 'phase12_runs')
+  ]);
+
+  const requestTimeoutMsRaw = firstNonEmptyString([
+    cliArgs['request-timeout-ms'],
+    env.PHASE12_REQUEST_TIMEOUT_MS,
+    '600000'
+  ]);
+
+  const failFastRaw = firstNonEmptyString([
+    cliArgs['fail-fast'],
+    env.PHASE12_FAIL_FAST,
+    'true'
+  ]);
+
+  const saveChunkResponsesRaw = firstNonEmptyString([
+    cliArgs['save-chunk-responses'],
+    env.PHASE12_SAVE_CHUNK_RESPONSES,
+    'false'
+  ]);
+
   if (!snapshotPathRaw) {
     throw new Error('snapshot path is required. Use --snapshot or PHASE12_SNAPSHOT_PATH.');
   }
@@ -157,12 +231,22 @@ function buildLauncherConfig(options) {
   const totalTrials = parseRequiredPositiveInteger(totalTrialsRaw, 'totalTrials');
   const chunkTrials = parseRequiredPositiveInteger(chunkTrialsRaw, 'chunkTrials');
   const topN = parseRequiredPositiveInteger(topNRaw, 'topN');
+  const requestTimeoutMs = parseOptionalPositiveInteger(
+    requestTimeoutMsRaw,
+    'requestTimeoutMs',
+    600000
+  );
 
   if (chunkTrials > totalTrials) {
-    throw new Error(`chunkTrials must not exceed totalTrials. Received chunkTrials=${chunkTrials}, totalTrials=${totalTrials}`);
+    throw new Error(
+      `chunkTrials must not exceed totalTrials. Received chunkTrials=${chunkTrials}, totalTrials=${totalTrials}`
+    );
   }
 
-  const printChunks = /^(1|true|yes|y)$/i.test(printChunksRaw);
+  const dryRun = resolveDryRun(cliArgs, env);
+  const printChunks = parseBoolean(printChunksRaw, true);
+  const failFast = parseBoolean(failFastRaw, true);
+  const saveChunkResponses = parseBoolean(saveChunkResponsesRaw, false);
 
   return {
     snapshotPath: path.resolve(snapshotPathRaw),
@@ -172,7 +256,12 @@ function buildLauncherConfig(options) {
     chunkTrials,
     baseSeed: String(baseSeedRaw),
     topN,
+    dryRun,
     printChunks,
+    outputRootDir: path.resolve(outputRootDirRaw),
+    requestTimeoutMs,
+    failFast,
+    saveChunkResponses,
     display: {
       maskedWorkerToken: maskToken(workerTokenRaw)
     }
@@ -182,5 +271,8 @@ function buildLauncherConfig(options) {
 module.exports = {
   buildLauncherConfig,
   maskToken,
-  parseCliArgs
+  parseBoolean,
+  parseCliArgs,
+  parseOptionalPositiveInteger,
+  parseRequiredPositiveInteger
 };
