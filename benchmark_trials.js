@@ -368,3 +368,386 @@ function benchmarkTrialCountsVeryHigh100k() {
 function benchmarkTrialCountsUltra500kSingle() {
   benchmarkTrialCounts_([500000], 1, "ULTRA_500K");
 }
+
+function getDefaultExternalBenchmarkInvocationOptions_() {
+  return {
+    mode: "EXTERNAL_HTTP",
+    includeBestAllocation: false,
+    includeCandidatePoolsSummary: true,
+    includeBestScoring: true
+  };
+}
+
+function getDefaultExternalBenchmarkElapsedBudgetMs_() {
+  return 240000;
+}
+
+function getDefaultExternalBenchmarkPerCallSoftLimitMs_() {
+  return 120000;
+}
+
+function getDefaultExternalBenchmarkSeedBase_() {
+  return 12345;
+}
+
+function mergeSimpleObjects_(baseObject, overrideObject) {
+  const result = {};
+  const first = baseObject || {};
+  const second = overrideObject || {};
+  const firstKeys = Object.keys(first);
+  const secondKeys = Object.keys(second);
+
+  for (let i = 0; i < firstKeys.length; i++) {
+    result[firstKeys[i]] = first[firstKeys[i]];
+  }
+
+  for (let j = 0; j < secondKeys.length; j++) {
+    result[secondKeys[j]] = second[secondKeys[j]];
+  }
+
+  return result;
+}
+
+function normalizeExternalBenchmarkOptions_(options) {
+  const source = options || {};
+  const invocationOverrides = source.invocationOptions || {};
+  const normalized = mergeSimpleObjects_(source, {
+    elapsedBudgetMs: getDefaultExternalBenchmarkElapsedBudgetMs_(),
+    perCallSoftLimitMs: getDefaultExternalBenchmarkPerCallSoftLimitMs_(),
+    seedBase: getDefaultExternalBenchmarkSeedBase_(),
+    refreshSummaryAfterEachTrialCount: true,
+    stopOnFailure: true,
+    stopOnPerCallSoftLimit: true,
+    invocationOptions: mergeSimpleObjects_(
+      getDefaultExternalBenchmarkInvocationOptions_(),
+      invocationOverrides
+    )
+  });
+
+  normalized.invocationOptions = mergeSimpleObjects_(
+    getDefaultExternalBenchmarkInvocationOptions_(),
+    invocationOverrides
+  );
+
+  if (typeof normalized.elapsedBudgetMs !== "number" || !isFinite(normalized.elapsedBudgetMs) || normalized.elapsedBudgetMs < 1000) {
+    normalized.elapsedBudgetMs = getDefaultExternalBenchmarkElapsedBudgetMs_();
+  }
+
+  if (typeof normalized.perCallSoftLimitMs !== "number" || !isFinite(normalized.perCallSoftLimitMs) || normalized.perCallSoftLimitMs < 1000) {
+    normalized.perCallSoftLimitMs = getDefaultExternalBenchmarkPerCallSoftLimitMs_();
+  }
+
+  return normalized;
+}
+
+function deriveExternalBenchmarkSeed_(seedBase, repeatIndex) {
+  if (seedBase === null || seedBase === undefined || seedBase === "") {
+    return null;
+  }
+
+  if (typeof seedBase === "number" && isFinite(seedBase)) {
+    return seedBase + repeatIndex - 1;
+  }
+
+  return String(seedBase) + "_r" + repeatIndex;
+}
+
+function safeComponentScoreFromBestScoringLike_(bestScoringLike, componentKey) {
+  if (!bestScoringLike || typeof bestScoringLike !== "object") {
+    return "";
+  }
+
+  const componentScores = bestScoringLike.componentScores;
+  if (componentScores && typeof componentScores === "object") {
+    if (typeof componentScores[componentKey] === "number") {
+      return componentScores[componentKey];
+    }
+
+    if (
+      componentScores[componentKey]
+      && typeof componentScores[componentKey] === "object"
+      && typeof componentScores[componentKey].score === "number"
+    ) {
+      return componentScores[componentKey].score;
+    }
+  }
+
+  const components = bestScoringLike.components;
+  if (
+    components
+    && typeof components === "object"
+    && components[componentKey]
+    && typeof components[componentKey] === "object"
+    && typeof components[componentKey].score === "number"
+  ) {
+    return components[componentKey].score;
+  }
+
+  return "";
+}
+
+function safeNumberFieldFromObjects_(fieldName, firstObject, secondObject) {
+  if (firstObject && typeof firstObject[fieldName] === "number") {
+    return firstObject[fieldName];
+  }
+
+  if (secondObject && typeof secondObject[fieldName] === "number") {
+    return secondObject[fieldName];
+  }
+
+  return "";
+}
+
+function safeScorerConfigSourceFromBestScoring_(bestScoring) {
+  if (!bestScoring || typeof bestScoring !== "object") {
+    return "";
+  }
+
+  if (bestScoring.scorerConfig && bestScoring.scorerConfig.source) {
+    return bestScoring.scorerConfig.source;
+  }
+
+  if (bestScoring.source) {
+    return bestScoring.source;
+  }
+
+  return "";
+}
+
+function buildBenchmarkRowFromTransportTrialResult_(batchLabel, trialCount, repeatIndex, runtimeMs, transportResult, note) {
+  const timestamp = new Date();
+  const ok = !!(transportResult && transportResult.ok === true);
+  const bestTrial = transportResult && transportResult.bestTrial ? transportResult.bestTrial : null;
+  const bestScoring = transportResult && transportResult.bestScoring ? transportResult.bestScoring : null;
+  const scoringSummary = bestTrial && bestTrial.scoringSummary ? bestTrial.scoringSummary : null;
+  const scoringLike = bestScoring || scoringSummary;
+
+  return [
+    timestamp,
+    batchLabel,
+    trialCount,
+    repeatIndex,
+    ok,
+    ok && bestTrial && typeof bestTrial.score === "number" ? bestTrial.score : "",
+    runtimeMs,
+    runtimeMs / 1000,
+    safeComponentScoreFromBestScoringLike_(scoringLike, "unfilledPenalty"),
+    safeComponentScoreFromBestScoringLike_(scoringLike, "spacingPenalty"),
+    safeComponentScoreFromBestScoringLike_(scoringLike, "preLeavePenalty"),
+    safeComponentScoreFromBestScoringLike_(scoringLike, "crReward"),
+    safeComponentScoreFromBestScoringLike_(scoringLike, "dualEligibleIcuBonus"),
+    safeComponentScoreFromBestScoringLike_(scoringLike, "standbyAdjacencyPenalty"),
+    safeComponentScoreFromBestScoringLike_(scoringLike, "standbyCountFairnessPenalty"),
+    safeComponentScoreFromBestScoringLike_(scoringLike, "pointBalanceWithinSection"),
+    safeComponentScoreFromBestScoringLike_(scoringLike, "pointBalanceGlobal"),
+    safeNumberFieldFromObjects_("meanPoints", bestScoring, scoringSummary),
+    safeNumberFieldFromObjects_("standardDeviation", bestScoring, scoringSummary),
+    safeNumberFieldFromObjects_("minPoints", bestScoring, scoringSummary),
+    safeNumberFieldFromObjects_("maxPoints", bestScoring, scoringSummary),
+    safeNumberFieldFromObjects_("range", bestScoring, scoringSummary),
+    safeScorerConfigSourceFromBestScoring_(bestScoring),
+    note || (ok ? "" : (transportResult && transportResult.message ? transportResult.message : "Unknown failure"))
+  ];
+}
+
+function buildExternalBenchmarkNote_(seed, invocationOptions, extraMessage) {
+  const parts = [];
+
+  if (invocationOptions && invocationOptions.mode) {
+    parts.push("mode=" + invocationOptions.mode);
+  }
+
+  if (seed !== undefined) {
+    parts.push("seed=" + seed);
+  }
+
+  if (extraMessage) {
+    parts.push(extraMessage);
+  }
+
+  return parts.join("; ");
+}
+
+function buildExternalBenchmarkFailureTransportResult_(message, details) {
+  const result = {
+    ok: false,
+    contractVersion: "transport_trial_result_v1",
+    message: message || "Unknown external benchmark failure."
+  };
+
+  if (details && typeof details === "object") {
+    const keys = Object.keys(details);
+    for (let i = 0; i < keys.length; i++) {
+      result[keys[i]] = details[keys[i]];
+    }
+  }
+
+  return result;
+}
+
+function prepareRandomTrialsSnapshotForBenchmark_(trialCount, seed) {
+  try {
+    if (seed === null || seed === undefined || seed === "") {
+      return prepareRandomTrialsSnapshot_(trialCount);
+    }
+
+    return prepareRandomTrialsSnapshot_(trialCount, { seed: seed });
+  } catch (error) {
+    return {
+      ok: false,
+      message: "prepareRandomTrialsSnapshot_ failed: " + (error && error.message ? error.message : String(error))
+    };
+  }
+}
+
+function benchmarkTrialCountsExternalHttp_(trialCounts, repeats, batchLabel, options) {
+  if (!trialCounts || trialCounts.length === 0) {
+    throw new Error("trialCounts is required.");
+  }
+
+  if (!repeats || repeats < 1) {
+    throw new Error("repeats must be at least 1.");
+  }
+
+  const label = batchLabel || "EXTERNAL_HTTP_BENCH";
+  const settings = normalizeExternalBenchmarkOptions_(options);
+  const overallStartedAt = Date.now();
+  let stopRequested = false;
+  let stopReason = "";
+  let completedRunCount = 0;
+
+  for (let i = 0; i < trialCounts.length; i++) {
+    const trialCount = trialCounts[i];
+
+    for (let repeatIndex = 1; repeatIndex <= repeats; repeatIndex++) {
+      const elapsedBeforeRunMs = Date.now() - overallStartedAt;
+      if (elapsedBeforeRunMs >= settings.elapsedBudgetMs) {
+        stopRequested = true;
+        stopReason = "Elapsed budget reached before starting next run.";
+        break;
+      }
+
+      const seed = deriveExternalBenchmarkSeed_(settings.seedBase, repeatIndex);
+      const invocationOptions = settings.invocationOptions;
+      const startedAt = Date.now();
+      let transportResult;
+      let note = buildExternalBenchmarkNote_(seed, invocationOptions, null);
+
+      const prepared = prepareRandomTrialsSnapshotForBenchmark_(trialCount, seed);
+      if (prepared.ok !== true) {
+        transportResult = buildExternalBenchmarkFailureTransportResult_(prepared.message || "Snapshot preparation failed.", {
+          trialSpec: {
+            trialCount: trialCount,
+            seed: seed
+          }
+        });
+      } else {
+        try {
+          transportResult = invokeTrialCompute_(prepared.snapshot, invocationOptions);
+        } catch (error) {
+          transportResult = buildExternalBenchmarkFailureTransportResult_(
+            "invokeTrialCompute_ threw: " + (error && error.message ? error.message : String(error)),
+            {
+              trialSpec: {
+                trialCount: trialCount,
+                seed: seed
+              }
+            }
+          );
+        }
+      }
+
+      const runtimeMs = Date.now() - startedAt;
+      if (runtimeMs >= settings.perCallSoftLimitMs) {
+        note = buildExternalBenchmarkNote_(seed, invocationOptions, "per-call soft limit reached");
+      }
+
+      if (!transportResult || transportResult.ok !== true) {
+        const failureMessage = transportResult && transportResult.message
+          ? transportResult.message
+          : "Unknown failure";
+        note = buildExternalBenchmarkNote_(seed, invocationOptions, failureMessage);
+      }
+
+      const row = buildBenchmarkRowFromTransportTrialResult_(
+        label,
+        trialCount,
+        repeatIndex,
+        runtimeMs,
+        transportResult,
+        note
+      );
+      appendBenchmarkRows_([row]);
+      completedRunCount += 1;
+
+      Logger.log(JSON.stringify({
+        batchLabel: label,
+        trialCount: trialCount,
+        repeatIndex: repeatIndex,
+        seed: seed,
+        invocationMode: invocationOptions.mode,
+        ok: transportResult && transportResult.ok === true,
+        bestScore: transportResult && transportResult.bestTrial ? transportResult.bestTrial.score : null,
+        runtimeMs: runtimeMs,
+        message: transportResult && transportResult.ok === true
+          ? ""
+          : (transportResult && transportResult.message ? transportResult.message : "Unknown failure")
+      }, null, 2));
+
+      if ((!transportResult || transportResult.ok !== true) && settings.stopOnFailure) {
+        stopRequested = true;
+        stopReason = "Stopped after failed run at trialCount=" + trialCount + ", repeatIndex=" + repeatIndex + ".";
+        break;
+      }
+
+      if (runtimeMs >= settings.perCallSoftLimitMs && settings.stopOnPerCallSoftLimit) {
+        stopRequested = true;
+        stopReason = "Stopped after per-call soft limit was reached at trialCount=" + trialCount + ", repeatIndex=" + repeatIndex + ".";
+        break;
+      }
+    }
+
+    if (settings.refreshSummaryAfterEachTrialCount) {
+      refreshBenchmarkSummarySheet();
+    }
+
+    if (stopRequested) {
+      break;
+    }
+  }
+
+  if (!settings.refreshSummaryAfterEachTrialCount) {
+    refreshBenchmarkSummarySheet();
+  }
+
+  const result = {
+    ok: true,
+    batchLabel: label,
+    trialCounts: trialCounts,
+    repeats: repeats,
+    invocationMode: settings.invocationOptions.mode,
+    completedRunCount: completedRunCount,
+    elapsedMs: Date.now() - overallStartedAt,
+    stoppedEarly: stopRequested,
+    stopReason: stopReason || null
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function benchmarkTrialCountsExternalHttpValidation() {
+  return benchmarkTrialCountsExternalHttp_([200, 500, 1000], 2, "EXTERNAL_HTTP_VALIDATION");
+}
+
+function benchmarkTrialCountsExternalHttpModerate() {
+  return benchmarkTrialCountsExternalHttp_([2000, 5000, 10000], 3, "EXTERNAL_HTTP_MODERATE");
+}
+
+function benchmarkTrialCountsExternalHttpHighSingle() {
+  return benchmarkTrialCountsExternalHttp_([20000, 50000], 2, "EXTERNAL_HTTP_HIGH_SINGLE");
+}
+
+function benchmarkTrialCountsExternalHttpVeryHigh100kSingle() {
+  return benchmarkTrialCountsExternalHttp_([100000], 1, "EXTERNAL_HTTP_100K_SINGLE");
+}
