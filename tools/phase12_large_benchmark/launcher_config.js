@@ -221,6 +221,39 @@ function buildLauncherConfig(options) {
     env.PHASE12_RUN_DIR
   ]);
 
+  const uploadToDriveRaw = firstNonEmptyString([
+    cliArgs['upload-to-drive'],
+    env.PHASE12_UPLOAD_TO_DRIVE,
+    'false'
+  ]);
+
+  const driveOAuthClientCredentialsFileRaw = firstNonEmptyString([
+    cliArgs['drive-oauth-client-credentials-file'],
+    env.PHASE12_DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE
+  ]);
+
+  const driveOAuthTokenFileRaw = firstNonEmptyString([
+    cliArgs['drive-oauth-token-file'],
+    env.PHASE12_DRIVE_OAUTH_TOKEN_FILE,
+    path.join(process.cwd(), 'tmp', 'phase12_drive_oauth_token.json')
+  ]);
+
+  const driveRootFolderIdRaw = firstNonEmptyString([
+    cliArgs['drive-root-folder-id'],
+    env.PHASE12_DRIVE_ROOT_FOLDER_ID
+  ]);
+
+  const driveBenchmarkRunsFolderIdRaw = firstNonEmptyString([
+    cliArgs['drive-benchmark-runs-folder-id'],
+    env.PHASE12_DRIVE_BENCHMARK_RUNS_FOLDER_ID
+  ]);
+
+  const driveBenchmarkRunsFolderNameRaw = firstNonEmptyString([
+    cliArgs['drive-benchmark-runs-folder-name'],
+    env.PHASE12_DRIVE_BENCHMARK_RUNS_FOLDER_NAME,
+    'benchmark_runs'
+  ]);
+
   if (!snapshotPathRaw) {
     throw new Error('snapshot path is required. Use --snapshot or PHASE12_SNAPSHOT_PATH.');
   }
@@ -248,11 +281,7 @@ function buildLauncherConfig(options) {
   const totalTrials = parseRequiredPositiveInteger(totalTrialsRaw, 'totalTrials');
   const chunkTrials = parseRequiredPositiveInteger(chunkTrialsRaw, 'chunkTrials');
   const topN = parseRequiredPositiveInteger(topNRaw, 'topN');
-  const requestTimeoutMs = parseOptionalPositiveInteger(
-    requestTimeoutMsRaw,
-    'requestTimeoutMs',
-    600000
-  );
+  const requestTimeoutMs = parseOptionalPositiveInteger(requestTimeoutMsRaw, 'requestTimeoutMs', 600000);
 
   if (chunkTrials > totalTrials) {
     throw new Error(
@@ -265,10 +294,39 @@ function buildLauncherConfig(options) {
   const printChunks = parseBoolean(printChunksRaw, true);
   const failFast = parseBoolean(failFastRaw, true);
   const saveChunkResponses = parseBoolean(saveChunkResponsesRaw, false);
+  const uploadToDrive = parseBoolean(uploadToDriveRaw, false);
   const resolvedRunDir = runDirRaw ? path.resolve(runDirRaw) : null;
 
   if (resume && !resolvedRunDir) {
     throw new Error('runDir is required when --resume is used. Use --run-dir or PHASE12_RUN_DIR.');
+  }
+
+  const driveOAuthClientCredentialsFile = driveOAuthClientCredentialsFileRaw
+    ? path.resolve(driveOAuthClientCredentialsFileRaw)
+    : null;
+  const driveOAuthTokenFile = driveOAuthTokenFileRaw
+    ? path.resolve(driveOAuthTokenFileRaw)
+    : null;
+
+  if (uploadToDrive && !driveOAuthClientCredentialsFile) {
+    throw new Error(
+      'driveOAuthClientCredentialsFile is required when --upload-to-drive is enabled. ' +
+      'Use --drive-oauth-client-credentials-file or PHASE12_DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE.'
+    );
+  }
+
+  if (uploadToDrive && !driveOAuthTokenFile) {
+    throw new Error(
+      'driveOAuthTokenFile is required when --upload-to-drive is enabled. ' +
+      'Use --drive-oauth-token-file or PHASE12_DRIVE_OAUTH_TOKEN_FILE.'
+    );
+  }
+
+  if (uploadToDrive && !driveRootFolderIdRaw) {
+    throw new Error(
+      'driveRootFolderId is required when --upload-to-drive is enabled. ' +
+      'Use --drive-root-folder-id or PHASE12_DRIVE_ROOT_FOLDER_ID.'
+    );
   }
 
   return {
@@ -287,6 +345,12 @@ function buildLauncherConfig(options) {
     requestTimeoutMs,
     failFast,
     saveChunkResponses,
+    uploadToDrive,
+    driveOAuthClientCredentialsFile,
+    driveOAuthTokenFile,
+    driveRootFolderId: driveRootFolderIdRaw || null,
+    driveBenchmarkRunsFolderId: driveBenchmarkRunsFolderIdRaw || null,
+    driveBenchmarkRunsFolderName: driveBenchmarkRunsFolderNameRaw,
     display: {
       maskedWorkerToken: maskToken(workerTokenRaw)
     }

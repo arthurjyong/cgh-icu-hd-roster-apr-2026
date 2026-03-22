@@ -1,0 +1,281 @@
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+const DRIVE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+
+function escapeDriveQueryString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+async function getDriveFileOrThrow(drive, fileId, fields) {
+  try {
+    const response = await drive.files.get({
+      fileId,
+      fields: fields || 'id,name,mimeType,parents',
+      supportsAllDrives: true
+    });
+    return response.data;
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    throw new Error(`Drive file lookup failed for ID ${fileId}: ${message}`);
+  }
+}
+
+function ensureFolderMimeType(file, description) {
+  if (!file || file.mimeType !== DRIVE_FOLDER_MIME_TYPE) {
+    throw new Error(`${description} is not a Drive folder.`);
+  }
+}
+
+function ensureParentRelationship(file, expectedParentId, description) {
+  const parents = Array.isArray(file && file.parents) ? file.parents : [];
+  if (!parents.includes(expectedParentId)) {
+    throw new Error(`${description} is not under expected parent folder ID ${expectedParentId}.`);
+  }
+}
+
+async function listChildFoldersByName(drive, parentFolderId, folderName) {
+  const query = [
+    `'${escapeDriveQueryString(parentFolderId)}' in parents`,
+    `name='${escapeDriveQueryString(folderName)}'`,
+    `mimeType='${DRIVE_FOLDER_MIME_TYPE}'`,
+    'trashed=false'
+  ].join(' and ');
+
+  const response = await drive.files.list({
+    q: query,
+    fields: 'files(id,name,mimeType,parents)',
+    pageSize: 10,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  });
+
+  return Array.isArray(response.data && response.data.files)
+    ? response.data.files
+    : [];
+}
+
+async function createDriveFolder(drive, parentFolderId, folderName) {
+  const response = await drive.files.create({
+    requestBody: {
+      name: folderName,
+      mimeType: DRIVE_FOLDER_MIME_TYPE,
+      parents: [parentFolderId]
+    },
+    fields: 'id,name,mimeType,parents',
+    supportsAllDrives: true
+  });
+
+  return response.data;
+}
+
+async function resolveBenchmarkRunsFolder(drive, config) {
+  const rootFolder = await getDriveFileOrThrow(
+    drive,
+    config.driveRootFolderId,
+    'id,name,mimeType,parents'
+  );
+  ensureFolderMimeType(rootFolder, `Drive root folder ${config.driveRootFolderId}`);
+
+  if (config.driveBenchmarkRunsFolderId) {
+    const benchmarkRunsFolder = await getDriveFileOrThrow(
+      drive,
+      config.driveBenchmarkRunsFolderId,
+      'id,name,mimeType,parents'
+    );
+    ensureFolderMimeType(
+      benchmarkRunsFolder,
+      `Drive benchmark_runs folder ${config.driveBenchmarkRunsFolderId}`
+    );
+    ensureParentRelationship(
+      benchmarkRunsFolder,
+      rootFolder.id,
+      `Drive benchmark_runs folder ${config.driveBenchmarkRunsFolderId}`
+    );
+
+    return {
+      rootFolder,
+      benchmarkRunsFolder,
+      benchmarkRunsFolderSource: 'CONFIGURED_ID'
+    };
+  }
+
+  const childFolders = await listChildFoldersByName(
+    drive,
+    rootFolder.id,
+    config.driveBenchmarkRunsFolderName
+  );
+
+  if (childFolders.length > 1) {
+    throw new Error(
+      `Multiple Drive folders named ${config.driveBenchmarkRunsFolderName} were found under root folder ID ${rootFolder.id}. ` +
+      'Provide PHASE12_DRIVE_BENCHMARK_RUNS_FOLDER_ID explicitly.'
+    );
+  }
+
+  if (childFolders.length === 1) {
+    return {
+      rootFolder,
+      benchmarkRunsFolder: childFolders[0],
+      benchmarkRunsFolderSource: 'DISCOVERED_BY_NAME'
+    };
+  }
+
+  const benchmarkRunsFolder = await createDriveFolder(
+    drive,
+    rootFolder.id,
+    config.driveBenchmarkRunsFolderName
+  );
+
+  return {
+    rootFolder,
+    benchmarkRunsFolder,
+    benchmarkRunsFolderSource: 'CREATED_BY_NAME'
+  };
+}
+
+async function createRunFolderOrThrow(drive, benchmarkRunsFolderId, runFolderName) {
+  const existing = await listChildFoldersByName(drive, benchmarkRunsFolderId, runFolderName);
+
+  if (existing.length > 0) {
+    throw new Error(
+      `Drive run folder already exists under benchmark_runs: ${runFolderName}. ` +
+      'Refusing to overwrite existing uploaded artifacts.'
+    );
+  }
+
+  return createDriveFolder(drive, benchmarkRunsFolderId, runFolderName);
+}
+
+async function uploadFile(drive, options) {
+  const source = options || {};
+  const localPath = path.resolve(source.localPath);
+  const parentFolderId = source.parentFolderId;
+  const fileName = source.fileName || path.basename(localPath);
+  const mimeType = source.mimeType || 'application/json';
+
+  if (!fs.existsSync(localPath)) {
+    throw new Error(`Upload source file not found: ${localPath}`);
+  }
+
+  const response = await drive.files.create({
+    requestBody: {
+      name: fileName,
+      parents: [parentFolderId]
+    },
+    media: {
+      mimeType,
+      body: fs.createReadStream(localPath)
+    },
+    fields: 'id,name,mimeType,parents,size',
+    supportsAllDrives: true
+  });
+
+  return response.data;
+}
+
+async function uploadFinalArtifactsToDrive(options) {
+  const source = options || {};
+  const driveAuthGateway = source.driveAuthGateway;
+  const config = source.config || {};
+  const artifactSet = source.artifactSet || {};
+  const drive = driveAuthGateway && driveAuthGateway.drive;
+
+  if (!drive) {
+    throw new Error('driveAuthGateway.drive is required.');
+  }
+
+  if (!artifactSet.runFolderName) {
+    throw new Error('artifactSet.runFolderName is required.');
+  }
+
+  if (!Array.isArray(artifactSet.files) || artifactSet.files.length === 0) {
+    throw new Error('artifactSet.files must contain at least one uploadable file.');
+  }
+
+  const folderResolution = await resolveBenchmarkRunsFolder(drive, config);
+  const runFolder = await createRunFolderOrThrow(
+    drive,
+    folderResolution.benchmarkRunsFolder.id,
+    artifactSet.runFolderName
+  );
+
+  const createdFolders = {
+    topChunksFolder: null
+  };
+
+  const uploadedFiles = [];
+
+  for (const fileDescriptor of artifactSet.files) {
+    const relativePath = String(fileDescriptor.relativePath || '').replace(/\\/g, '/');
+    const pathParts = relativePath.split('/').filter(Boolean);
+
+    let parentFolderId = runFolder.id;
+
+    if (pathParts.length > 1) {
+      const firstSegment = pathParts[0];
+      if (firstSegment !== 'top_chunks') {
+        throw new Error(`Unsupported Drive relative path segment: ${relativePath}`);
+      }
+
+      if (!createdFolders.topChunksFolder) {
+        createdFolders.topChunksFolder = await createDriveFolder(drive, runFolder.id, 'top_chunks');
+      }
+
+      parentFolderId = createdFolders.topChunksFolder.id;
+    }
+
+    const driveFile = await uploadFile(drive, {
+      localPath: fileDescriptor.localPath,
+      parentFolderId,
+      fileName: pathParts.length > 0 ? pathParts[pathParts.length - 1] : path.basename(fileDescriptor.localPath),
+      mimeType: fileDescriptor.mimeType || 'application/json'
+    });
+
+    uploadedFiles.push({
+      relativePath,
+      localPath: path.resolve(fileDescriptor.localPath),
+      driveFileId: driveFile.id,
+      driveFileName: driveFile.name,
+      parentFolderId,
+      size: driveFile.size || null
+    });
+  }
+
+  return {
+    ok: true,
+    authMode: driveAuthGateway.authMode || 'OAUTH_DESKTOP',
+    principalEmail: driveAuthGateway.principalEmail || null,
+    principalDisplayName: driveAuthGateway.principalDisplayName || null,
+    credentialsFilePath: driveAuthGateway.credentialsFilePath || null,
+    tokenFilePath: driveAuthGateway.tokenFilePath || null,
+    rootFolder: {
+      id: folderResolution.rootFolder.id,
+      name: folderResolution.rootFolder.name
+    },
+    benchmarkRunsFolder: {
+      id: folderResolution.benchmarkRunsFolder.id,
+      name: folderResolution.benchmarkRunsFolder.name,
+      source: folderResolution.benchmarkRunsFolderSource
+    },
+    runFolder: {
+      id: runFolder.id,
+      name: runFolder.name
+    },
+    uploadedFiles
+  };
+}
+
+module.exports = {
+  DRIVE_FOLDER_MIME_TYPE,
+  createDriveFolder,
+  createRunFolderOrThrow,
+  escapeDriveQueryString,
+  getDriveFileOrThrow,
+  listChildFoldersByName,
+  resolveBenchmarkRunsFolder,
+  uploadFile,
+  uploadFinalArtifactsToDrive
+};

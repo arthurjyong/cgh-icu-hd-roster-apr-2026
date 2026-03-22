@@ -14,7 +14,10 @@ function emitJson(value, stream) {
   target.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function loadExecutionModules() {
+function loadExecutionModules(options) {
+  const source = options || {};
+  const includeDriveModules = !!source.includeDriveModules;
+
   const moduleSpecs = [
     {
       key: 'runtime',
@@ -34,7 +37,7 @@ function loadExecutionModules() {
     {
       key: 'artifacts',
       relativePath: './launcher_artifacts',
-      requiredExports: ['createLocalArtifactWriter']
+      requiredExports: ['createLocalArtifactWriter', 'buildDriveUploadArtifactSet', 'writeDriveUploadSummary']
     },
     {
       key: 'checkpoint',
@@ -42,6 +45,21 @@ function loadExecutionModules() {
       requiredExports: ['createFreshCheckpointState', 'loadCheckpointState', 'CHECKPOINT_STATUS']
     }
   ];
+
+  if (includeDriveModules) {
+    moduleSpecs.push(
+      {
+        key: 'driveAuth',
+        relativePath: './launcher_drive_auth',
+        requiredExports: ['createDriveAuthGateway']
+      },
+      {
+        key: 'driveUpload',
+        relativePath: './launcher_drive_upload',
+        requiredExports: ['uploadFinalArtifactsToDrive']
+      }
+    );
+  }
 
   const loaded = {};
   const missing = [];
@@ -78,12 +96,12 @@ function loadExecutionModules() {
 function buildExecutionMissingError(config, snapshotInfo, chunkPlan, loadResult) {
   return {
     ok: false,
-    launcherPhase: '12E',
+    launcherPhase: '12F',
     stage: 'load_execution_modules',
     mode: config.dryRun ? 'DRY_RUN_PLAN_ONLY' : 'EXECUTE',
     message:
-      'Execution helpers for Phase 12E are not present yet. ' +
-      'Add launcher_runtime.js, launcher_http.js, launcher_consolidate.js, launcher_artifacts.js, and launcher_checkpoint.js before execute mode.',
+      'Execution helpers for Phase 12F are not fully present yet. ' +
+      'Ensure launcher_runtime.js, launcher_http.js, launcher_consolidate.js, launcher_artifacts.js, launcher_checkpoint.js, and when upload is enabled launcher_drive_auth.js and launcher_drive_upload.js are available.',
     config: {
       snapshotPath: snapshotInfo.file.absolutePath,
       totalTrials: config.totalTrials,
@@ -96,7 +114,13 @@ function buildExecutionMissingError(config, snapshotInfo, chunkPlan, loadResult)
       failFast: config.failFast,
       saveChunkResponses: config.saveChunkResponses,
       resume: !!config.resume,
-      runDir: config.runDir || null
+      runDir: config.runDir || null,
+      uploadToDrive: !!config.uploadToDrive,
+      driveOAuthClientCredentialsFile: config.driveOAuthClientCredentialsFile || null,
+      driveOAuthTokenFile: config.driveOAuthTokenFile || null,
+      driveRootFolderId: config.driveRootFolderId || null,
+      driveBenchmarkRunsFolderId: config.driveBenchmarkRunsFolderId || null,
+      driveBenchmarkRunsFolderName: config.driveBenchmarkRunsFolderName || null
     },
     missingModules: loadResult.missing
   };
@@ -128,105 +152,111 @@ function compareChunkWinnerRecords(left, right) {
 }
 
 function summarizeWinnerRecordForOutput(record) {
+  if (!record) {
+    return null;
+  }
+
   return {
-    chunkNumber: record && record.chunk ? record.chunk.chunkNumber : null,
-    startTrialIndex: record && record.chunk ? record.chunk.startTrialIndex : null,
-    endTrialIndexExclusive: record && record.chunk ? record.chunk.endTrialIndexExclusive : null,
-    trialCount: record && record.chunk ? record.chunk.trialCount : null,
-    chunkSeed: record && record.chunk ? record.chunk.chunkSeed : null,
-    bestScore: record && typeof record.bestScore === 'number' ? record.bestScore : null,
-    bestTrialIndex: record && typeof record.bestTrialIndex === 'number' ? record.bestTrialIndex : null,
-    invocationMode: record ? record.invocationMode || null : null,
-    message: record ? record.message || null : null,
-    meanPoints: record && typeof record.meanPoints === 'number' ? record.meanPoints : null,
-    standardDeviation: record && typeof record.standardDeviation === 'number' ? record.standardDeviation : null,
-    range: record && typeof record.range === 'number' ? record.range : null,
-    totalScore: record && typeof record.totalScore === 'number' ? record.totalScore : null
+    chunkNumber: record.chunk ? record.chunk.chunkNumber : null,
+    startTrialIndex: record.chunk ? record.chunk.startTrialIndex : null,
+    endTrialIndexExclusive: record.chunk ? record.chunk.endTrialIndexExclusive : null,
+    trialCount: record.chunk ? record.chunk.trialCount : null,
+    chunkSeed: record.chunk ? record.chunk.chunkSeed : null,
+    bestScore: record.bestScore,
+    bestTrialIndex: record.bestTrialIndex,
+    invocationMode: record.transportSummary ? record.transportSummary.invocationMode : null,
+    message: record.transportSummary ? record.transportSummary.message : null,
+    meanPoints: record.transportSummary ? record.transportSummary.meanPoints : null,
+    standardDeviation: record.transportSummary ? record.transportSummary.standardDeviation : null,
+    range: record.transportSummary ? record.transportSummary.range : null,
+    totalScore: record.bestScore
   };
 }
 
 function summarizeFailureRecord(failureRecord) {
   return {
-    chunkNumber: failureRecord.chunk ? failureRecord.chunk.chunkNumber : null,
-    startTrialIndex: failureRecord.chunk ? failureRecord.chunk.startTrialIndex : null,
-    endTrialIndexExclusive: failureRecord.chunk ? failureRecord.chunk.endTrialIndexExclusive : null,
-    trialCount: failureRecord.chunk ? failureRecord.chunk.trialCount : null,
-    chunkSeed: failureRecord.chunk ? failureRecord.chunk.chunkSeed : null,
+    chunk: failureRecord.chunk,
+    message: failureRecord.message || null,
     stage: failureRecord.stage || null,
-    statusCode: failureRecord.statusCode || null,
-    message: failureRecord.message || null
+    statusCode: failureRecord.statusCode || null
   };
 }
 
 function summarizeSuccessExecution(execution) {
-  const transportResult = execution.transportResult || {};
-  const bestTrial = transportResult.bestTrial || {};
-
   return {
-    chunkNumber: execution.chunk ? execution.chunk.chunkNumber : null,
-    startTrialIndex: execution.chunk ? execution.chunk.startTrialIndex : null,
-    endTrialIndexExclusive: execution.chunk ? execution.chunk.endTrialIndexExclusive : null,
-    trialCount: execution.chunk ? execution.chunk.trialCount : null,
-    chunkSeed: execution.chunk ? execution.chunk.chunkSeed : null,
-    statusCode: execution.statusCode || null,
-    durationMs: execution.durationMs || null,
-    bestScore: typeof bestTrial.score === 'number' ? bestTrial.score : null,
-    bestTrialIndex: typeof bestTrial.index === 'number' ? bestTrial.index : null,
-    startedAtIso: execution.startedAtIso || null,
-    completedAtIso: execution.completedAtIso || null
-  };
-}
-
-function extractChunkWinnerRecord(execution) {
-  const transport = execution.transportResult || {};
-  const bestTrial = transport.bestTrial || {};
-  const scoringSummary = bestTrial.scoringSummary || {};
-  const allocationSummary = bestTrial.allocationSummary || {};
-
-  return {
-    chunk: execution.chunk || null,
-    bestScore: typeof bestTrial.score === 'number' ? bestTrial.score : null,
-    bestTrialIndex: typeof bestTrial.index === 'number' ? bestTrial.index : null,
-    invocationMode: transport.invocationMode || null,
-    message: transport.message || null,
-    meanPoints: typeof allocationSummary.meanPoints === 'number' ? allocationSummary.meanPoints : null,
-    standardDeviation: typeof allocationSummary.standardDeviation === 'number'
-      ? allocationSummary.standardDeviation
+    chunk: execution.chunk,
+    bestScore: execution.transportSummary ? execution.transportSummary.bestScore : null,
+    bestTrialIndex: execution.transportResult
+      && execution.transportResult.bestTrial
+      && typeof execution.transportResult.bestTrial.index === 'number'
+      ? execution.transportResult.bestTrial.index
       : null,
-    range: typeof allocationSummary.range === 'number' ? allocationSummary.range : null,
-    totalScore: typeof scoringSummary.totalScore === 'number' ? scoringSummary.totalScore : null,
-    transportResult: transport
+    invocationMode: execution.transportSummary ? execution.transportSummary.invocationMode : null,
+    message: execution.transportSummary ? execution.transportSummary.message : null
   };
-}
-
-function upsertSuccessSummary(state, successSummary) {
-  const chunkNumber = successSummary.chunkNumber;
-  state.successes = Array.isArray(state.successes) ? state.successes : [];
-  state.successes = state.successes.filter((entry) => entry.chunkNumber !== chunkNumber);
-  state.successes.push(successSummary);
-  state.successes.sort((left, right) => left.chunkNumber - right.chunkNumber);
-
-  state.completedChunkNumbers = Array.isArray(state.completedChunkNumbers)
-    ? state.completedChunkNumbers.filter((entry) => entry !== chunkNumber)
-    : [];
-  state.completedChunkNumbers.push(chunkNumber);
-  state.completedChunkNumbers = Array.from(new Set(state.completedChunkNumbers)).sort((left, right) => left - right);
-
-  state.failures = Array.isArray(state.failures)
-    ? state.failures.filter((entry) => entry.chunkNumber !== chunkNumber)
-    : [];
 }
 
 function upsertFailureSummary(state, failureSummary) {
-  const chunkNumber = failureSummary.chunkNumber;
-  state.failures = Array.isArray(state.failures) ? state.failures : [];
-  state.failures = state.failures.filter((entry) => entry.chunkNumber !== chunkNumber);
-  state.failures.push(failureSummary);
-  state.failures.sort((left, right) => {
-    const leftChunk = typeof left.chunkNumber === 'number' ? left.chunkNumber : Number.MAX_SAFE_INTEGER;
-    const rightChunk = typeof right.chunkNumber === 'number' ? right.chunkNumber : Number.MAX_SAFE_INTEGER;
-    return leftChunk - rightChunk;
+  if (!Array.isArray(state.failures)) {
+    state.failures = [];
+  }
+
+  const chunkNumber = failureSummary && failureSummary.chunk ? failureSummary.chunk.chunkNumber : null;
+  const existingIndex = state.failures.findIndex((entry) => {
+    return entry && entry.chunk && entry.chunk.chunkNumber === chunkNumber;
   });
+
+  if (existingIndex >= 0) {
+    state.failures[existingIndex] = failureSummary;
+  } else {
+    state.failures.push(failureSummary);
+  }
+}
+
+function upsertSuccessSummary(state, successSummary) {
+  if (!Array.isArray(state.successes)) {
+    state.successes = [];
+  }
+
+  const chunkNumber = successSummary && successSummary.chunk ? successSummary.chunk.chunkNumber : null;
+  const existingIndex = state.successes.findIndex((entry) => {
+    return entry && entry.chunk && entry.chunk.chunkNumber === chunkNumber;
+  });
+
+  if (existingIndex >= 0) {
+    state.successes[existingIndex] = successSummary;
+  } else {
+    state.successes.push(successSummary);
+  }
+
+  if (!Array.isArray(state.completedChunkNumbers)) {
+    state.completedChunkNumbers = [];
+  }
+
+  if (typeof chunkNumber === 'number' && !state.completedChunkNumbers.includes(chunkNumber)) {
+    state.completedChunkNumbers.push(chunkNumber);
+    state.completedChunkNumbers.sort((a, b) => a - b);
+  }
+
+  if (Array.isArray(state.failures)) {
+    state.failures = state.failures.filter((entry) => {
+      return !(entry && entry.chunk && entry.chunk.chunkNumber === chunkNumber);
+    });
+  }
+}
+
+function extractChunkWinnerRecord(execution) {
+  const bestTrial = execution && execution.transportResult && execution.transportResult.bestTrial
+    ? execution.transportResult.bestTrial
+    : null;
+
+  return {
+    chunk: execution.chunk,
+    bestScore: bestTrial && typeof bestTrial.score === 'number' ? bestTrial.score : null,
+    bestTrialIndex: bestTrial && typeof bestTrial.index === 'number' ? bestTrial.index : null,
+    transportSummary: execution.transportSummary || null,
+    transportResult: execution.transportResult || null
+  };
 }
 
 function getPendingChunks(chunkPlan, completedChunkNumbers) {
@@ -234,7 +264,7 @@ function getPendingChunks(chunkPlan, completedChunkNumbers) {
   return chunkPlan.chunks.filter((chunk) => !completed.has(chunk.chunkNumber));
 }
 
-function buildCompactSummary(config, snapshotInfo, chunkPlan, planFingerprint, state, artifactWriteResult, message, mode) {
+function buildCompactSummary(config, snapshotInfo, chunkPlan, planFingerprint, state, artifactWriteResult, message, mode, driveUpload) {
   const pendingChunkCount = Math.max(
     0,
     chunkPlan.chunkCount - (Array.isArray(state.completedChunkNumbers) ? state.completedChunkNumbers.length : 0)
@@ -242,7 +272,7 @@ function buildCompactSummary(config, snapshotInfo, chunkPlan, planFingerprint, s
 
   return {
     ok: state.status === 'COMPLETED' && pendingChunkCount === 0 && (!state.failures || state.failures.length === 0),
-    launcherPhase: '12E',
+    launcherPhase: '12F',
     mode: mode || 'EXECUTE',
     message,
     planFingerprint,
@@ -258,7 +288,13 @@ function buildCompactSummary(config, snapshotInfo, chunkPlan, planFingerprint, s
       failFast: config.failFast,
       saveChunkResponses: config.saveChunkResponses,
       resume: !!config.resume,
-      runDir: config.runDir || (artifactWriteResult ? artifactWriteResult.runDir : null)
+      runDir: config.runDir || (artifactWriteResult ? artifactWriteResult.runDir : null),
+      uploadToDrive: !!config.uploadToDrive,
+      driveOAuthClientCredentialsFile: config.driveOAuthClientCredentialsFile || null,
+      driveOAuthTokenFile: config.driveOAuthTokenFile || null,
+      driveRootFolderId: config.driveRootFolderId || null,
+      driveBenchmarkRunsFolderId: config.driveBenchmarkRunsFolderId || null,
+      driveBenchmarkRunsFolderName: config.driveBenchmarkRunsFolderName || null
     },
     snapshot: {
       contractVersion: snapshotInfo.snapshot.contractVersion,
@@ -279,7 +315,48 @@ function buildCompactSummary(config, snapshotInfo, chunkPlan, planFingerprint, s
       ? state.topChunkWinnerRecords.slice().sort(compareChunkWinnerRecords).map(summarizeWinnerRecordForOutput)
       : [],
     failures: Array.isArray(state.failures) ? state.failures : [],
-    artifacts: artifactWriteResult || null
+    artifacts: artifactWriteResult || null,
+    driveUpload: driveUpload || null
+  };
+}
+
+async function maybeUploadToDrive(config, modules, artifactWriteResult) {
+  if (!config.uploadToDrive) {
+    return null;
+  }
+
+  const artifactSet = modules.artifacts.buildDriveUploadArtifactSet(artifactWriteResult);
+  const driveAuthGateway = await modules.driveAuth.createDriveAuthGateway({ config });
+  const driveUploadResult = await modules.driveUpload.uploadFinalArtifactsToDrive({
+    driveAuthGateway,
+    config,
+    artifactSet
+  });
+
+  const driveUploadSummary = {
+    launcherPhase: '12F',
+    uploadedAtIso: new Date().toISOString(),
+    authMode: driveUploadResult.authMode || 'OAUTH_DESKTOP',
+    principalEmail: driveUploadResult.principalEmail || null,
+    principalDisplayName: driveUploadResult.principalDisplayName || null,
+    credentialsFilePath: driveUploadResult.credentialsFilePath || null,
+    tokenFilePath: driveUploadResult.tokenFilePath || null,
+    rootFolder: driveUploadResult.rootFolder || null,
+    benchmarkRunsFolder: driveUploadResult.benchmarkRunsFolder || null,
+    runFolder: driveUploadResult.runFolder || null,
+    uploadedFiles: Array.isArray(driveUploadResult.uploadedFiles)
+      ? driveUploadResult.uploadedFiles
+      : []
+  };
+
+  const summaryPath = modules.artifacts.writeDriveUploadSummary(
+    artifactWriteResult.runDir,
+    driveUploadSummary
+  );
+
+  return {
+    ...driveUploadSummary,
+    summaryPath
   };
 }
 
@@ -329,7 +406,13 @@ async function executeChunkPlan(config, snapshotInfo, chunkPlan, planFingerprint
     requestTimeoutMs: config.requestTimeoutMs,
     failFast: config.failFast,
     saveChunkResponses: config.saveChunkResponses,
-    resume: !!config.resume
+    resume: !!config.resume,
+    uploadToDrive: !!config.uploadToDrive,
+    driveOAuthClientCredentialsFile: config.driveOAuthClientCredentialsFile || null,
+    driveOAuthTokenFile: config.driveOAuthTokenFile || null,
+    driveRootFolderId: config.driveRootFolderId || null,
+    driveBenchmarkRunsFolderId: config.driveBenchmarkRunsFolderId || null,
+    driveBenchmarkRunsFolderName: config.driveBenchmarkRunsFolderName || null
   };
 
   const initResult = artifactWriter.initializeRun({
@@ -345,6 +428,10 @@ async function executeChunkPlan(config, snapshotInfo, chunkPlan, planFingerprint
 
   if (pendingChunks.length === 0 && checkpointState.status === checkpointModule.CHECKPOINT_STATUS.COMPLETED) {
     const artifactWriteResult = artifactWriter.writeFinalArtifacts(checkpointState);
+    const driveUpload = checkpointState.status === checkpointModule.CHECKPOINT_STATUS.COMPLETED
+      ? await maybeUploadToDrive(config, modules, artifactWriteResult)
+      : null;
+
     return buildCompactSummary(
       config,
       snapshotInfo,
@@ -353,7 +440,8 @@ async function executeChunkPlan(config, snapshotInfo, chunkPlan, planFingerprint
       checkpointState,
       artifactWriteResult,
       'Phase 12 run was already complete. No pending chunks were executed.',
-      'EXECUTE'
+      'EXECUTE',
+      driveUpload
     );
   }
 
@@ -420,6 +508,9 @@ async function executeChunkPlan(config, snapshotInfo, chunkPlan, planFingerprint
   artifactWriter.writeCheckpointState(checkpointState);
 
   const artifactWriteResult = artifactWriter.writeFinalArtifacts(checkpointState);
+  const driveUpload = checkpointState.status === checkpointModule.CHECKPOINT_STATUS.COMPLETED
+    ? await maybeUploadToDrive(config, modules, artifactWriteResult)
+    : null;
   const message = checkpointState.status === checkpointModule.CHECKPOINT_STATUS.COMPLETED
     ? 'Phase 12 chunk execution completed successfully.'
     : 'Phase 12 chunk execution paused with remaining or failed chunks. Resume is required to finish the run.';
@@ -432,7 +523,8 @@ async function executeChunkPlan(config, snapshotInfo, chunkPlan, planFingerprint
     checkpointState,
     artifactWriteResult,
     message,
-    'EXECUTE'
+    'EXECUTE',
+    driveUpload
   );
 }
 
@@ -452,7 +544,7 @@ async function main() {
     return;
   }
 
-  const loadResult = loadExecutionModules();
+  const loadResult = loadExecutionModules({ includeDriveModules: config.uploadToDrive });
   if (!loadResult.ok) {
     emitJson(buildExecutionMissingError(config, snapshotInfo, chunkPlan, loadResult), process.stderr);
     process.exit(1);
@@ -477,7 +569,7 @@ async function main() {
 main().catch((error) => {
   emitJson({
     ok: false,
-    launcherPhase: '12E',
+    launcherPhase: '12F',
     stage: 'unhandled_exception',
     message: error && error.message ? error.message : String(error)
   }, process.stderr);
