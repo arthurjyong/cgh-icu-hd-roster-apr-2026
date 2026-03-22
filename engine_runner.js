@@ -30,6 +30,45 @@ function buildScorerConfigResultLikeFromSnapshot_(snapshot) {
   };
 }
 
+
+function buildComponentScoresFromScoring_(scoring) {
+  if (!scoring || typeof scoring !== "object") {
+    return null;
+  }
+
+  const components = scoring.components;
+  if (!components || typeof components !== "object") {
+    return null;
+  }
+
+  const keys = Object.keys(components);
+  const result = {};
+  let hasAny = false;
+
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const component = components[key];
+
+    if (typeof component === "number" && isFinite(component)) {
+      result[key] = component;
+      hasAny = true;
+      continue;
+    }
+
+    if (
+      component &&
+      typeof component === "object" &&
+      typeof component.score === "number" &&
+      isFinite(component.score)
+    ) {
+      result[key] = component.score;
+      hasAny = true;
+    }
+  }
+
+  return hasAny ? result : null;
+}
+
 function buildTransportTrialResult_(headlessResult, options) {
   const transportContractVersion = "transport_trial_result_v1";
   const includeCandidatePoolsSummary = !(options && options.includeCandidatePoolsSummary === false);
@@ -78,7 +117,7 @@ function buildTransportTrialResult_(headlessResult, options) {
           minPoints: headlessResult.bestScoring.minPoints,
           maxPoints: headlessResult.bestScoring.maxPoints,
           range: headlessResult.bestScoring.range,
-          componentScores: headlessResult.bestScoring.componentScores || null
+          componentScores: buildComponentScoresFromScoring_(headlessResult.bestScoring)
         }
       : null
   };
@@ -317,7 +356,7 @@ function runRandomTrialsHeadless_(snapshot) {
           minPoints: scoring.minPoints,
           maxPoints: scoring.maxPoints,
           range: scoring.range,
-          componentScores: scoring.componentScores || null
+          componentScores: buildComponentScoresFromScoring_(scoring)
         }
       };
     }
