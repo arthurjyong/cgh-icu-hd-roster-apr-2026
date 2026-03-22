@@ -16,3 +16,23 @@ function generateRoster() {
 function runDebugCandidatePoolsForFirstDate() {
   debugBuildCandidatePoolsForFirstDate_();
 }
+
+function runWriteBestRandomTrialToSheetLocalDirect() {
+  runWriteBestRandomTrialToSheetWithInvocationOptions_({
+    mode: "LOCAL_DIRECT"
+  });
+}
+
+function runWriteBestRandomTrialToSheetSimulatedExternal() {
+  runWriteBestRandomTrialToSheetWithInvocationOptions_({
+    mode: "LOCAL_SIMULATED_EXTERNAL"
+  });
+}
+
+function debugLocalDirectTransportTrialResult() {
+  debugTransportTrialResultForInvocationMode_("LOCAL_DIRECT");
+}
+
+function debugExternalHttpTransportTrialResult() {
+  debugTransportTrialResultForInvocationMode_("EXTERNAL_HTTP");
+}

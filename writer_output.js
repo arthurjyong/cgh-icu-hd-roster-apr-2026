@@ -149,6 +149,27 @@ function writeTransportTrialResultToSheet_(transportResult) {
   writeAllocationToSheet_(transportResult.bestAllocation);
 }
 
+function getDefaultTrialComputeInvocationMode_() {
+  return "LOCAL_SIMULATED_EXTERNAL";
+}
+
+function getTrialComputeInvocationOptions_(overrides) {
+  const options = {
+    mode: getDefaultTrialComputeInvocationMode_(),
+    includeBestAllocation: true,
+    includeCandidatePoolsSummary: true,
+    includeBestScoring: false
+  };
+
+  const extra = overrides || {};
+  const keys = Object.keys(extra);
+  for (let i = 0; i < keys.length; i++) {
+    options[keys[i]] = extra[keys[i]];
+  }
+
+  return options;
+}
+
 function runWriteGreedyAllocationToSheet() {
   const parseResult = parseRosterSheet();
   if (parseResult.ok !== true) {
@@ -203,8 +224,9 @@ function runWriteRandomAllocationToSheet() {
   }, null, 2));
 }
 
-function runWriteBestRandomTrialToSheet() {
+function runWriteBestRandomTrialToSheetWithInvocationOptions_(overrideOptions) {
   const trialCount = 200;
+  const invocationOptions = getTrialComputeInvocationOptions_(overrideOptions);
   const prepared = prepareRandomTrialsSnapshot_(trialCount);
 
   if (prepared.ok !== true) {
@@ -212,12 +234,7 @@ function runWriteBestRandomTrialToSheet() {
     return;
   }
 
-  const transportResult = invokeTrialCompute_(prepared.snapshot, {
-    mode: "LOCAL_SIMULATED_EXTERNAL",
-    includeBestAllocation: true,
-    includeCandidatePoolsSummary: true,
-    includeBestScoring: false
-  });
+  const transportResult = invokeTrialCompute_(prepared.snapshot, invocationOptions);
 
   if (transportResult.ok !== true) {
     Logger.log(JSON.stringify(transportResult, null, 2));
@@ -231,7 +248,7 @@ function runWriteBestRandomTrialToSheet() {
 
   Logger.log(JSON.stringify({
     message: "Best trial allocation written to Sheet1 rows 35-38.",
-    invocationMode: "LOCAL_SIMULATED_EXTERNAL",
+    invocationMode: invocationOptions.mode,
     trialCount: trialCount,
     bestScore: bestTrial.score,
     meanPoints: scoringSummary.meanPoints || null,
@@ -240,4 +257,8 @@ function runWriteBestRandomTrialToSheet() {
     maxPoints: scoringSummary.maxPoints || null,
     range: scoringSummary.range || null
   }, null, 2));
+}
+
+function runWriteBestRandomTrialToSheet() {
+  runWriteBestRandomTrialToSheetWithInvocationOptions_();
 }
