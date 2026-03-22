@@ -1,0 +1,14 @@
+{
+  "name": "cgh-roster-trial-compute-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal external HTTP worker skeleton for the CGH ICU/HD roster allocator.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
