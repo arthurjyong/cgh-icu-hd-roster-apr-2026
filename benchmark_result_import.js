@@ -1069,16 +1069,21 @@ function safeFiniteNumberOrBlank_(value) {
   return isFiniteNumberValue_(value) ? value : "";
 }
 
-function buildBenchmarkTrialsRowsFromCampaignReport_(report, importTimestamp) {
+function buildBenchmarkTrialsRowsFromCampaignReport_(loaded, importTimestamp) {
+  const report = loaded && loaded.report ? loaded.report : {};
   const campaign = report && report.campaign ? report.campaign : {};
   const runs = report && Array.isArray(report.runs) ? report.runs : [];
   const timestamp = importTimestamp || new Date();
+  const campaignFolderName = loaded && loaded.campaignFolderName
+    ? String(loaded.campaignFolderName).trim()
+    : "";
 
   return runs.map(function(run) {
     const scoring = run && run.scoring && typeof run.scoring === "object" ? run.scoring : {};
     const rowObject = {
       ImportTimestamp: timestamp,
       CampaignBatchLabel: safeStringOrBlank_(campaign.batchLabel),
+      CampaignFolderName: safeStringOrBlank_(campaignFolderName),
       SnapshotLabel: safeStringOrBlank_(run.snapshotFileName || campaign.snapshotFileName || ""),
       SnapshotFileSha256: safeStringOrBlank_(run.snapshotFileSha256 || campaign.snapshotFileSha256 || ""),
       TrialCount: safeFiniteNumberOrBlank_(run.trialCount),
@@ -1197,7 +1202,7 @@ function buildBenchmarkCampaignImportSummary_(loaded) {
 function importBenchmarkCampaignReportToTrialsSheet_(overrides) {
   const loaded = loadBenchmarkCampaignReportFromDrive_(overrides);
   const importTimestamp = new Date();
-  const rows = buildBenchmarkTrialsRowsFromCampaignReport_(loaded.report, importTimestamp);
+  const rows = buildBenchmarkTrialsRowsFromCampaignReport_(loaded, importTimestamp);
   const writeResult = writeBenchmarkCampaignRowsToTrialsSheet_(rows, {
     writeMode: loaded.options.writeMode,
     refreshSummarySheet: loaded.options.refreshSummarySheet
@@ -1307,4 +1312,464 @@ function runReplaceBenchmarkTrialsWithSelectedCampaignReport() {
   });
 
   Logger.log(JSON.stringify(buildBenchmarkCampaignImportLogPayload_(imported), null, 2));
+}
+
+
+function normalizeBenchmarkTrialsRowObjectCell_(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return value;
+}
+
+function getRequiredBenchmarkTrialsWritebackColumns_() {
+  return [
+    "CampaignFolderName",
+    "RunFolderName",
+    "ArtifactFileName",
+    "BestScore",
+    "Ok"
+  ];
+}
+
+function readBenchmarkTrialsRowsAsObjects_() {
+  const sheet = ensureBenchmarkTrialsSheet_();
+  const expectedHeader = getBenchmarkTrialsHeader_();
+  const lastRow = sheet.getLastRow();
+  const actualHeader = expectedHeader.length > 0
+    ? sheet.getRange(1, 1, 1, expectedHeader.length).getValues()[0]
+    : [];
+  const headerMap = buildHeaderIndexMapFromRow_(actualHeader);
+  const requiredColumns = getRequiredBenchmarkTrialsWritebackColumns_();
+
+  for (let i = 0; i < requiredColumns.length; i++) {
+    if (typeof headerMap[requiredColumns[i]] !== "number") {
+      throw new Error(
+        'BENCHMARK_TRIALS header is missing required column "' + requiredColumns[i] + '". ' +
+        "Update benchmark_trials.js and rerun resetBenchmarkSheets() plus a REPLACE campaign import."
+      );
+    }
+  }
+
+  if (lastRow <= 1) {
+    return {
+      ok: true,
+      sheetName: sheet.getName(),
+      rowCount: 0,
+      rows: []
+    };
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, expectedHeader.length).getValues();
+  const rows = [];
+
+  for (let i = 0; i < values.length; i++) {
+    const sourceRow = values[i];
+    const rowObject = {
+      _rowNumber: i + 2
+    };
+    let hasAnyValue = false;
+
+    for (let j = 0; j < expectedHeader.length; j++) {
+      const headerKey = expectedHeader[j];
+      const cellValue = normalizeBenchmarkTrialsRowObjectCell_(sourceRow[j]);
+      rowObject[headerKey] = cellValue;
+      if (cellValue !== "") {
+        hasAnyValue = true;
+      }
+    }
+
+    if (hasAnyValue) {
+      rows.push(rowObject);
+    }
+  }
+
+  return {
+    ok: true,
+    sheetName: sheet.getName(),
+    rowCount: rows.length,
+    rows: rows
+  };
+}
+
+function normalizeBenchmarkTrialsBoolean_(value) {
+  if (value === true || value === false) {
+    return value;
+  }
+
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "TRUE") {
+    return true;
+  }
+  if (normalized === "FALSE") {
+    return false;
+  }
+  return null;
+}
+
+function trimmedStringOrBlank_(value) {
+  return String(value === null || value === undefined ? "" : value).trim();
+}
+
+function numericValueOrNull_(value) {
+  return isFiniteNumberValue_(value) ? Number(value) : null;
+}
+
+function buildBenchmarkTrialsWritebackCandidates_(rowObjects) {
+  const candidates = [];
+  const rows = Array.isArray(rowObjects) ? rowObjects : [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const okValue = normalizeBenchmarkTrialsBoolean_(row.Ok);
+    const campaignFolderName = trimmedStringOrBlank_(row.CampaignFolderName);
+    const runFolderName = trimmedStringOrBlank_(row.RunFolderName);
+    const artifactFileName = trimmedStringOrBlank_(row.ArtifactFileName);
+    const bestScore = numericValueOrNull_(row.BestScore);
+
+    if (okValue !== true) {
+      continue;
+    }
+    if (!campaignFolderName || !runFolderName || !artifactFileName) {
+      continue;
+    }
+    if (bestScore === null) {
+      continue;
+    }
+
+    const candidate = {};
+    const keys = Object.keys(row);
+    for (let j = 0; j < keys.length; j++) {
+      candidate[keys[j]] = row[keys[j]];
+    }
+
+    candidate.CampaignFolderName = campaignFolderName;
+    candidate.RunFolderName = runFolderName;
+    candidate.ArtifactFileName = artifactFileName;
+    candidate.BestScore = bestScore;
+    candidate.TrialCountNumber = numericValueOrNull_(row.TrialCount);
+    candidate.RepeatIndexNumber = numericValueOrNull_(row.RepeatIndex);
+    candidate.RunIdNormalized = trimmedStringOrBlank_(row.RunId);
+    candidate.InvocationModeNormalized = trimmedStringOrBlank_(row.InvocationMode);
+
+    candidates.push(candidate);
+  }
+
+  return candidates;
+}
+
+function resolveSingleCampaignFolderInTrialsSheet_(candidates) {
+  const unique = {};
+  const ordered = [];
+  const rows = Array.isArray(candidates) ? candidates : [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const name = trimmedStringOrBlank_(rows[i].CampaignFolderName);
+    if (!name) {
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(unique, name)) {
+      unique[name] = true;
+      ordered.push(name);
+    }
+  }
+
+  if (ordered.length === 0) {
+    throw new Error(
+      "BENCHMARK_TRIALS has no valid writeback candidates. Run a REPLACE campaign import first."
+    );
+  }
+
+  if (ordered.length > 1) {
+    throw new Error(
+      "BENCHMARK_TRIALS contains multiple CampaignFolderName values among valid writeback candidates. " +
+      "Use REPLACE import for exactly one campaign before running writeback."
+    );
+  }
+
+  return ordered[0];
+}
+
+function compareBenchmarkTrialsWritebackCandidates_(left, right) {
+  const scoreDiff = left.BestScore - right.BestScore;
+  if (scoreDiff !== 0) {
+    return scoreDiff;
+  }
+
+  const leftTrialCount = left.TrialCountNumber === null ? Number.POSITIVE_INFINITY : left.TrialCountNumber;
+  const rightTrialCount = right.TrialCountNumber === null ? Number.POSITIVE_INFINITY : right.TrialCountNumber;
+  if (leftTrialCount !== rightTrialCount) {
+    return leftTrialCount - rightTrialCount;
+  }
+
+  const leftRepeat = left.RepeatIndexNumber === null ? Number.POSITIVE_INFINITY : left.RepeatIndexNumber;
+  const rightRepeat = right.RepeatIndexNumber === null ? Number.POSITIVE_INFINITY : right.RepeatIndexNumber;
+  if (leftRepeat !== rightRepeat) {
+    return leftRepeat - rightRepeat;
+  }
+
+  const runIdCompare = left.RunIdNormalized.localeCompare(right.RunIdNormalized);
+  if (runIdCompare !== 0) {
+    return runIdCompare;
+  }
+
+  return Number(left._rowNumber || 0) - Number(right._rowNumber || 0);
+}
+
+function pickBestBenchmarkTrialsWritebackCandidate_(candidates) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    throw new Error(
+      "BENCHMARK_TRIALS has no valid writeback candidates. Run a REPLACE campaign import first."
+    );
+  }
+
+  const sorted = candidates.slice().sort(compareBenchmarkTrialsWritebackCandidates_);
+  return sorted[0];
+}
+
+function findSingleChildFolderByNameOrThrow_(parentFolder, childFolderName, contextLabel) {
+  const iterator = parentFolder.getFoldersByName(childFolderName);
+  const matches = [];
+
+  while (iterator.hasNext() && matches.length < 2) {
+    matches.push(iterator.next());
+  }
+
+  if (matches.length === 0) {
+    throw new Error('No folder named "' + childFolderName + '" was found in ' + contextLabel + '.');
+  }
+
+  if (matches.length > 1 || iterator.hasNext()) {
+    throw new Error('Multiple folders named "' + childFolderName + '" were found in ' + contextLabel + '.');
+  }
+
+  return matches[0];
+}
+
+function findSingleFileByNameOrThrow_(parentFolder, fileName, contextLabel) {
+  const iterator = parentFolder.getFilesByName(fileName);
+  const matches = [];
+
+  while (iterator.hasNext() && matches.length < 2) {
+    matches.push(iterator.next());
+  }
+
+  if (matches.length === 0) {
+    throw new Error('No file named "' + fileName + '" was found in ' + contextLabel + '.');
+  }
+
+  if (matches.length > 1 || iterator.hasNext()) {
+    throw new Error('Multiple files named "' + fileName + '" were found in ' + contextLabel + '.');
+  }
+
+  return matches[0];
+}
+
+function resolveBenchmarkRunArtifactFromTrialsRow_(rowObject) {
+  const benchmarkRunsFolder = getPhase12BenchmarkRunsFolder_();
+  const campaignFolder = findSingleChildFolderByNameOrThrow_(
+    benchmarkRunsFolder,
+    rowObject.CampaignFolderName,
+    'benchmark_runs'
+  );
+  const runsFolder = findSingleChildFolderByNameOrThrow_(
+    campaignFolder,
+    'runs',
+    'campaign folder "' + campaignFolder.getName() + '"'
+  );
+  const runFolder = findSingleChildFolderByNameOrThrow_(
+    runsFolder,
+    rowObject.RunFolderName,
+    'campaign folder "' + campaignFolder.getName() + '" runs/'
+  );
+  const artifactFile = findSingleFileByNameOrThrow_(
+    runFolder,
+    rowObject.ArtifactFileName,
+    'run folder "' + runFolder.getName() + '"'
+  );
+
+  return {
+    benchmarkRunsFolderId: benchmarkRunsFolder.getId(),
+    campaignFolderId: campaignFolder.getId(),
+    campaignFolderName: campaignFolder.getName(),
+    runsFolderId: runsFolder.getId(),
+    runFolderId: runFolder.getId(),
+    runFolderName: runFolder.getName(),
+    artifactFileId: artifactFile.getId(),
+    artifactFileName: artifactFile.getName(),
+    artifactLastUpdated: artifactFile.getLastUpdated(),
+    artifactUrl: artifactFile.getUrl(),
+    artifactFile: artifactFile
+  };
+}
+
+function numericValuesApproximatelyEqual_(left, right) {
+  if (!isFiniteNumberValue_(left) || !isFiniteNumberValue_(right)) {
+    return false;
+  }
+
+  return Math.abs(Number(left) - Number(right)) <= 1e-9;
+}
+
+function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportResult, resolvedArtifact) {
+  const issues = [];
+  const transportBestTrial = transportResult && transportResult.bestTrial ? transportResult.bestTrial : {};
+  const transportTrialSpec = transportResult && transportResult.trialSpec ? transportResult.trialSpec : {};
+  const transportInvocationMode = transportResult ? trimmedStringOrBlank_(transportResult.invocationMode) : "";
+
+  if (trimmedStringOrBlank_(rowObject.RunFolderName) !== trimmedStringOrBlank_(resolvedArtifact.runFolderName)) {
+    issues.push("Selected BENCHMARK_TRIALS RunFolderName does not match resolved Drive run folder.");
+  }
+
+  if (trimmedStringOrBlank_(rowObject.ArtifactFileName) !== trimmedStringOrBlank_(resolvedArtifact.artifactFileName)) {
+    issues.push("Selected BENCHMARK_TRIALS ArtifactFileName does not match resolved Drive artifact file.");
+  }
+
+  if (isFiniteNumberValue_(rowObject.TrialCount) && isFiniteNumberValue_(transportTrialSpec.trialCount)) {
+    if (Number(rowObject.TrialCount) !== Number(transportTrialSpec.trialCount)) {
+      issues.push("Selected BENCHMARK_TRIALS TrialCount does not match transport trialSpec.trialCount.");
+    }
+  }
+
+  if (isFiniteNumberValue_(rowObject.BestScore) && isFiniteNumberValue_(transportBestTrial.score)) {
+    if (!numericValuesApproximatelyEqual_(rowObject.BestScore, transportBestTrial.score)) {
+      issues.push("Selected BENCHMARK_TRIALS BestScore does not match transport bestTrial.score.");
+    }
+  }
+
+  if (trimmedStringOrBlank_(rowObject.InvocationMode) && transportInvocationMode) {
+    if (trimmedStringOrBlank_(rowObject.InvocationMode) !== transportInvocationMode) {
+      issues.push("Selected BENCHMARK_TRIALS InvocationMode does not match transport invocationMode.");
+    }
+  }
+
+  return issues.length > 0
+    ? {
+        ok: false,
+        message: issues[0],
+        issues: issues
+      }
+    : {
+        ok: true
+      };
+}
+
+function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
+  const resolvedArtifact = resolveBenchmarkRunArtifactFromTrialsRow_(rowObject);
+  const rawText = readUtf8TextFromDriveFile_(resolvedArtifact.artifactFile);
+  const transportResult = parseJsonOrThrow_(
+    rawText,
+    resolvedArtifact.campaignFolderName + '/runs/' + resolvedArtifact.runFolderName + '/' + resolvedArtifact.artifactFileName
+  );
+  const transportValidation = validateTransportTrialResult_(transportResult);
+
+  if (transportValidation.ok !== true) {
+    throw new Error(transportValidation.message || "Resolved benchmark run artifact failed validation.");
+  }
+
+  const writebackValidation = validateTransportTrialResultForWriteback_(transportResult);
+  if (writebackValidation.ok !== true) {
+    throw new Error(writebackValidation.message || "Resolved benchmark run artifact is not writeback-safe.");
+  }
+
+  const rowArtifactValidation = validateBenchmarkTrialsRowAgainstTransportResult_(
+    rowObject,
+    transportResult,
+    resolvedArtifact
+  );
+  if (rowArtifactValidation.ok !== true) {
+    throw new Error(rowArtifactValidation.message || "BENCHMARK_TRIALS row does not match resolved artifact.");
+  }
+
+  return {
+    resolvedArtifact: resolvedArtifact,
+    transportValidation: transportValidation,
+    writebackValidation: writebackValidation,
+    rowArtifactValidation: rowArtifactValidation,
+    transportResult: transportResult
+  };
+}
+
+function selectBestBenchmarkTrialsWinnerForWriteback_() {
+  const trialsData = readBenchmarkTrialsRowsAsObjects_();
+  const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
+  const campaignFolderName = resolveSingleCampaignFolderInTrialsSheet_(candidates);
+  const campaignCandidates = candidates.filter(function(candidate) {
+    return candidate.CampaignFolderName === campaignFolderName;
+  });
+  const bestCandidate = pickBestBenchmarkTrialsWritebackCandidate_(campaignCandidates);
+  const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWriteback_(bestCandidate);
+
+  return {
+    ok: true,
+    trialsSheetName: trialsData.sheetName,
+    trialsDataRowCount: trialsData.rowCount,
+    candidateCount: candidates.length,
+    campaignFolderName: campaignFolderName,
+    candidateRow: bestCandidate,
+    loadedArtifact: loadedArtifact,
+    transportResult: loadedArtifact.transportResult
+  };
+}
+
+function buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, includeTransportResult) {
+  const candidate = selection.candidateRow || {};
+  const resolved = selection.loadedArtifact ? selection.loadedArtifact.resolvedArtifact : {};
+  const transportResult = selection.transportResult || {};
+  const bestTrial = transportResult.bestTrial || {};
+  const trialSpec = transportResult.trialSpec || {};
+  const bestAllocation = transportResult.bestAllocation || {};
+
+  const payload = {
+    ok: true,
+    trialsSheetName: selection.trialsSheetName,
+    trialsDataRowCount: selection.trialsDataRowCount,
+    candidateCount: selection.candidateCount,
+    chosenRowNumber: candidate._rowNumber || null,
+    campaignFolderName: selection.campaignFolderName,
+    campaignBatchLabel: candidate.CampaignBatchLabel || null,
+    snapshotFileSha256: candidate.SnapshotFileSha256 || null,
+    runId: candidate.RunId || null,
+    trialCount: isFiniteNumberValue_(candidate.TrialCount) ? Number(candidate.TrialCount) : null,
+    repeatIndex: isFiniteNumberValue_(candidate.RepeatIndex) ? Number(candidate.RepeatIndex) : null,
+    bestScore: isFiniteNumberValue_(candidate.BestScore) ? Number(candidate.BestScore) : null,
+    invocationMode: candidate.InvocationMode || null,
+    runFolderName: resolved.runFolderName || null,
+    artifactFileName: resolved.artifactFileName || null,
+    artifactFileId: resolved.artifactFileId || null,
+    artifactLastUpdated: resolved.artifactLastUpdated || null,
+    artifactUrl: resolved.artifactUrl || null,
+    transportValidation: selection.loadedArtifact.transportValidation,
+    writebackValidation: selection.loadedArtifact.writebackValidation,
+    rowArtifactValidation: selection.loadedArtifact.rowArtifactValidation,
+    transportSummary: {
+      contractVersion: transportResult.contractVersion || null,
+      trialCount: isFiniteNumberValue_(trialSpec.trialCount) ? Number(trialSpec.trialCount) : null,
+      bestTrialIndex: isFiniteNumberValue_(bestTrial.index) ? Number(bestTrial.index) : null,
+      bestScore: isFiniteNumberValue_(bestTrial.score) ? Number(bestTrial.score) : null,
+      invocationMode: transportResult.invocationMode || null,
+      allocationDayCount: Array.isArray(bestAllocation.days) ? bestAllocation.days.length : null
+    }
+  };
+
+  if (includeTransportResult === true) {
+    payload.transportResult = transportResult;
+  }
+
+  return payload;
+}
+
+function debugInspectBestBenchmarkTrialsWinnerForWriteback() {
+  const selection = selectBestBenchmarkTrialsWinnerForWriteback_();
+  Logger.log(JSON.stringify(buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false), null, 2));
+}
+
+function runWriteBestBenchmarkTrialsWinnerToSheet() {
+  const selection = selectBestBenchmarkTrialsWinnerForWriteback_();
+  writeTransportTrialResultToSheet_(selection.transportResult);
+
+  const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false);
+  payload.message = 'Best benchmark trials winner written to Sheet1 rows 35-38.';
+
+  Logger.log(JSON.stringify(payload, null, 2));
 }
