@@ -63,22 +63,46 @@ function buildComputeSnapshotFromParseResult_(parseResult, scorerConfigResult, o
 
 function validateComputeSnapshot_(snapshot) {
   const issues = [];
+  const expectedContractVersion = "compute_snapshot_v2";
+  const actualContractVersion = snapshot && snapshot.contractVersion
+    ? snapshot.contractVersion
+    : null;
+
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    issues.push("snapshot must be an object.");
+  }
 
   if (!snapshot) {
     issues.push("snapshot is required.");
   }
 
-  if (!snapshot || snapshot.contractVersion !== "compute_snapshot_v2") {
+  if (actualContractVersion !== expectedContractVersion) {
     issues.push("snapshot.contractVersion must be compute_snapshot_v2.");
   }
 
-  if (!snapshot || !snapshot.trialSpec) {
+  if (!snapshot || !snapshot.trialSpec || typeof snapshot.trialSpec !== "object") {
     issues.push("snapshot.trialSpec is required.");
-  } else if (typeof snapshot.trialSpec.trialCount !== "number" || snapshot.trialSpec.trialCount < 1) {
-    issues.push("snapshot.trialSpec.trialCount must be at least 1.");
+  } else {
+    if (typeof snapshot.trialSpec.trialCount !== "number" || !isFinite(snapshot.trialSpec.trialCount) || snapshot.trialSpec.trialCount < 1) {
+      issues.push("snapshot.trialSpec.trialCount must be at least 1.");
+    }
+
+    const hasSeed = Object.prototype.hasOwnProperty.call(snapshot.trialSpec, "seed");
+    const seed = hasSeed ? snapshot.trialSpec.seed : null;
+    const validSeed = seed === null
+      || seed === undefined
+      || seed === ""
+      || typeof seed === "number"
+      || typeof seed === "string";
+
+    if (!hasSeed) {
+      issues.push("snapshot.trialSpec.seed is required and may be null.");
+    } else if (!validSeed) {
+      issues.push("snapshot.trialSpec.seed must be null, a number, or a string.");
+    }
   }
 
-  if (!snapshot || !snapshot.inputs) {
+  if (!snapshot || !snapshot.inputs || typeof snapshot.inputs !== "object") {
     issues.push("snapshot.inputs is required.");
   } else {
     if (!Array.isArray(snapshot.inputs.calendarDays)) {
@@ -87,30 +111,77 @@ function validateComputeSnapshot_(snapshot) {
     if (!Array.isArray(snapshot.inputs.doctors)) {
       issues.push("snapshot.inputs.doctors must be an array.");
     }
-    if (!snapshot.inputs.doctorDayEntries || typeof snapshot.inputs.doctorDayEntries !== "object") {
+    if (!snapshot.inputs.doctorDayEntries || typeof snapshot.inputs.doctorDayEntries !== "object" || Array.isArray(snapshot.inputs.doctorDayEntries)) {
       issues.push("snapshot.inputs.doctorDayEntries must be an object.");
     }
-    if (!snapshot.inputs.availabilityMap || typeof snapshot.inputs.availabilityMap !== "object") {
+    if (!snapshot.inputs.availabilityMap || typeof snapshot.inputs.availabilityMap !== "object" || Array.isArray(snapshot.inputs.availabilityMap)) {
       issues.push("snapshot.inputs.availabilityMap must be an object.");
     }
   }
 
-  if (!snapshot || !snapshot.scorer) {
+  if (!snapshot || !snapshot.scorer || typeof snapshot.scorer !== "object") {
     issues.push("snapshot.scorer is required.");
-  } else if (!snapshot.scorer.weights || typeof snapshot.scorer.weights !== "object") {
+  } else if (!snapshot.scorer.weights || typeof snapshot.scorer.weights !== "object" || Array.isArray(snapshot.scorer.weights)) {
     issues.push("snapshot.scorer.weights must be an object.");
+  }
+
+  if (!snapshot || !snapshot.metadata || typeof snapshot.metadata !== "object" || Array.isArray(snapshot.metadata)) {
+    issues.push("snapshot.metadata is required.");
+  } else {
+    if (typeof snapshot.metadata.dateCount !== "number" || !isFinite(snapshot.metadata.dateCount) || snapshot.metadata.dateCount < 0) {
+      issues.push("snapshot.metadata.dateCount must be a non-negative number.");
+    }
+    if (typeof snapshot.metadata.doctorCount !== "number" || !isFinite(snapshot.metadata.doctorCount) || snapshot.metadata.doctorCount < 0) {
+      issues.push("snapshot.metadata.doctorCount must be a non-negative number.");
+    }
   }
 
   return issues.length > 0
     ? {
         ok: false,
+        expectedContractVersion: expectedContractVersion,
+        actualContractVersion: actualContractVersion,
         message: issues[0],
         issues: issues
       }
     : {
         ok: true,
         contractVersion: snapshot.contractVersion,
+        expectedContractVersion: expectedContractVersion,
+        actualContractVersion: actualContractVersion,
         trialCount: snapshot.trialSpec.trialCount,
-        seed: snapshot.trialSpec.seed
+        seed: snapshot.trialSpec.seed,
+        dateCount: snapshot.metadata.dateCount,
+        doctorCount: snapshot.metadata.doctorCount
       };
+}
+
+function validateTrialComputeRequest_(requestBody) {
+  const snapshotValidation = validateComputeSnapshot_(requestBody);
+
+  if (snapshotValidation.ok !== true) {
+    return {
+      ok: false,
+      contractKind: "compute_request_body",
+      expectedContractVersion: "compute_snapshot_v2",
+      actualContractVersion: requestBody && requestBody.contractVersion
+        ? requestBody.contractVersion
+        : null,
+      message: "Invalid compute request body: " + (snapshotValidation.message || "request body is invalid."),
+      issues: snapshotValidation.issues || [],
+      snapshotValidation: snapshotValidation
+    };
+  }
+
+  return {
+    ok: true,
+    contractKind: "compute_request_body",
+    contractVersion: snapshotValidation.contractVersion,
+    expectedContractVersion: "compute_snapshot_v2",
+    actualContractVersion: snapshotValidation.actualContractVersion,
+    trialCount: snapshotValidation.trialCount,
+    seed: snapshotValidation.seed,
+    dateCount: snapshotValidation.dateCount,
+    doctorCount: snapshotValidation.doctorCount
+  };
 }

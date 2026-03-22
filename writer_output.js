@@ -54,21 +54,19 @@ function writeAllocationToSheet_(allocationResult) {
 }
 
 function validateTransportTrialResultForWriteback_(transportResult) {
+  const generalValidation = validateTransportTrialResult_(transportResult);
+  if (generalValidation.ok !== true) {
+    return {
+      ok: false,
+      contractKind: "transport_trial_result_writeback",
+      message: generalValidation.message,
+      issues: generalValidation.issues || [],
+      generalValidation: generalValidation
+    };
+  }
+
   const issues = [];
   const slotKeys = ["MICU_CALL", "MICU_STANDBY", "MHD_CALL", "MHD_STANDBY"];
-
-  if (!transportResult) {
-    issues.push("transportResult is required.");
-  }
-
-  if (!transportResult || transportResult.ok !== true) {
-    issues.push("transportResult must be ok.");
-  }
-
-  if (!transportResult || transportResult.contractVersion !== "transport_trial_result_v1") {
-    issues.push("transportResult.contractVersion must be transport_trial_result_v1.");
-  }
-
   const bestAllocation = transportResult ? transportResult.bestAllocation : null;
 
   if (!bestAllocation) {
@@ -128,11 +126,14 @@ function validateTransportTrialResultForWriteback_(transportResult) {
   return issues.length > 0
     ? {
         ok: false,
+        contractKind: "transport_trial_result_writeback",
         message: issues[0],
-        issues: issues
+        issues: issues,
+        contractVersion: transportResult ? transportResult.contractVersion : null
       }
     : {
         ok: true,
+        contractKind: "transport_trial_result_writeback",
         contractVersion: transportResult.contractVersion,
         dayCount: bestAllocation.days.length
       };

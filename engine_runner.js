@@ -107,6 +107,125 @@ function buildTransportTrialResult_(headlessResult, options) {
   return transportResult;
 }
 
+function validateTransportTrialResult_(transportResult) {
+  const issues = [];
+  const expectedContractVersion = "transport_trial_result_v1";
+  const actualContractVersion = transportResult && transportResult.contractVersion
+    ? transportResult.contractVersion
+    : null;
+
+  if (!transportResult || typeof transportResult !== "object" || Array.isArray(transportResult)) {
+    issues.push("transportResult must be an object.");
+  }
+
+  if (!transportResult) {
+    issues.push("transportResult is required.");
+  }
+
+  if (actualContractVersion !== expectedContractVersion) {
+    issues.push("transportResult.contractVersion must be transport_trial_result_v1.");
+  }
+
+  if (!transportResult || transportResult.ok !== true) {
+    issues.push("transportResult must be ok.");
+  }
+
+  if (!transportResult || !transportResult.trialSpec || typeof transportResult.trialSpec !== "object") {
+    issues.push("transportResult.trialSpec is required.");
+  } else {
+    if (typeof transportResult.trialSpec.trialCount !== "number" || !isFinite(transportResult.trialSpec.trialCount) || transportResult.trialSpec.trialCount < 1) {
+      issues.push("transportResult.trialSpec.trialCount must be at least 1.");
+    }
+
+    const hasSeed = Object.prototype.hasOwnProperty.call(transportResult.trialSpec, "seed");
+    if (!hasSeed) {
+      issues.push("transportResult.trialSpec.seed is required and may be null.");
+    }
+  }
+
+  if (!transportResult || !transportResult.rng || typeof transportResult.rng !== "object") {
+    issues.push("transportResult.rng is required.");
+  } else {
+    if (typeof transportResult.rng.kind !== "string" || !transportResult.rng.kind) {
+      issues.push("transportResult.rng.kind must be a non-empty string.");
+    }
+
+    const hasNormalizedSeed = Object.prototype.hasOwnProperty.call(transportResult.rng, "normalizedSeed");
+    if (!hasNormalizedSeed) {
+      issues.push("transportResult.rng.normalizedSeed is required and may be null.");
+    }
+  }
+
+  if (!transportResult || transportResult.sourceContractVersion !== "headless_random_trials_result_v2") {
+    issues.push("transportResult.sourceContractVersion must be headless_random_trials_result_v2.");
+  }
+
+  if (!transportResult || transportResult.snapshotContractVersion !== "compute_snapshot_v2") {
+    issues.push("transportResult.snapshotContractVersion must be compute_snapshot_v2.");
+  }
+
+  if (!transportResult || !transportResult.bestTrial || typeof transportResult.bestTrial !== "object") {
+    issues.push("transportResult.bestTrial is required.");
+  } else {
+    if (typeof transportResult.bestTrial.index !== "number" || !isFinite(transportResult.bestTrial.index) || transportResult.bestTrial.index < 0) {
+      issues.push("transportResult.bestTrial.index must be a non-negative number.");
+    }
+    if (typeof transportResult.bestTrial.score !== "number" || !isFinite(transportResult.bestTrial.score)) {
+      issues.push("transportResult.bestTrial.score must be a finite number.");
+    }
+  }
+
+  if (transportResult && transportResult.candidatePoolsSummary !== null && transportResult.candidatePoolsSummary !== undefined) {
+    if (typeof transportResult.candidatePoolsSummary !== "object" || Array.isArray(transportResult.candidatePoolsSummary)) {
+      issues.push("transportResult.candidatePoolsSummary must be an object or null.");
+    }
+  }
+
+  if (transportResult && transportResult.bestAllocation !== undefined && transportResult.bestAllocation !== null) {
+    if (typeof transportResult.bestAllocation !== "object" || Array.isArray(transportResult.bestAllocation)) {
+      issues.push("transportResult.bestAllocation must be an object or null.");
+    } else {
+      if (transportResult.bestAllocation.ok !== true) {
+        issues.push("transportResult.bestAllocation must be ok when present.");
+      }
+      if (!Array.isArray(transportResult.bestAllocation.days)) {
+        issues.push("transportResult.bestAllocation.days must be an array when bestAllocation is present.");
+      }
+    }
+  }
+
+  if (transportResult && transportResult.bestScoring !== undefined && transportResult.bestScoring !== null) {
+    if (typeof transportResult.bestScoring !== "object" || Array.isArray(transportResult.bestScoring)) {
+      issues.push("transportResult.bestScoring must be an object or null.");
+    } else if (transportResult.bestScoring.ok !== true) {
+      issues.push("transportResult.bestScoring must be ok when present.");
+    }
+  }
+
+  return issues.length > 0
+    ? {
+        ok: false,
+        contractKind: "transport_trial_result",
+        expectedContractVersion: expectedContractVersion,
+        actualContractVersion: actualContractVersion,
+        message: issues[0],
+        issues: issues
+      }
+    : {
+        ok: true,
+        contractKind: "transport_trial_result",
+        contractVersion: transportResult.contractVersion,
+        expectedContractVersion: expectedContractVersion,
+        actualContractVersion: actualContractVersion,
+        trialCount: transportResult.trialSpec.trialCount,
+        seed: transportResult.trialSpec.seed,
+        bestTrialIndex: transportResult.bestTrial.index,
+        bestScore: transportResult.bestTrial.score,
+        hasBestAllocation: !!transportResult.bestAllocation,
+        hasBestScoring: !!transportResult.bestScoring
+      };
+}
+
 function runRandomTrialsHeadless_(snapshot) {
   const result = {
     ok: false,

@@ -7,13 +7,14 @@ function cloneViaJsonTransport_(value) {
 }
 
 function runLocalComputeWorkerFromRequest_(requestBody, options) {
-  const requestValidation = validateComputeSnapshot_(requestBody);
+  const requestValidation = validateTrialComputeRequest_(requestBody);
   if (requestValidation.ok !== true) {
     return {
       ok: false,
       contractVersion: "transport_trial_result_v1",
       requestContractVersion: requestBody && requestBody.contractVersion ? requestBody.contractVersion : null,
-      message: "Invalid compute request: " + (requestValidation.message || "request body is invalid."),
+      expectedRequestContractVersion: requestValidation.expectedContractVersion || "compute_snapshot_v2",
+      message: requestValidation.message || "Invalid compute request body.",
       requestValidation: requestValidation
     };
   }
@@ -22,20 +23,95 @@ function runLocalComputeWorkerFromRequest_(requestBody, options) {
   return buildTransportTrialResult_(headlessResult, options);
 }
 
+function buildInvalidTransportResponseResult_(message, validation, extraFields) {
+  const result = {
+    ok: false,
+    contractVersion: "transport_trial_result_v1",
+    message: message,
+    responseValidation: validation || null
+  };
+
+  const extra = extraFields || {};
+  const keys = Object.keys(extra);
+  for (let i = 0; i < keys.length; i++) {
+    result[keys[i]] = extra[keys[i]];
+  }
+
+  return result;
+}
+
 function invokeTrialCompute_(snapshot, options) {
   const mode = options && options.mode
     ? options.mode
     : "LOCAL_SIMULATED_EXTERNAL";
 
   if (mode === "LOCAL_DIRECT") {
+    const requestValidation = validateTrialComputeRequest_(snapshot);
+    if (requestValidation.ok !== true) {
+      return {
+        ok: false,
+        contractVersion: "transport_trial_result_v1",
+        expectedRequestContractVersion: requestValidation.expectedContractVersion || "compute_snapshot_v2",
+        requestContractVersion: snapshot && snapshot.contractVersion ? snapshot.contractVersion : null,
+        message: requestValidation.message || "Invalid compute request body.",
+        requestValidation: requestValidation
+      };
+    }
+
     const headlessResult = runRandomTrialsHeadless_(snapshot);
-    return buildTransportTrialResult_(headlessResult, options);
+    const transportResult = buildTransportTrialResult_(headlessResult, options);
+    const responseValidation = validateTransportTrialResult_(transportResult);
+
+    if (responseValidation.ok !== true) {
+      return buildInvalidTransportResponseResult_(
+        "Invalid compute response body: " + (responseValidation.message || "response body is invalid."),
+        responseValidation,
+        {
+          invocationMode: mode,
+          responseContractVersion: transportResult && transportResult.contractVersion
+            ? transportResult.contractVersion
+            : null,
+          expectedResponseContractVersion: responseValidation.expectedContractVersion || "transport_trial_result_v1"
+        }
+      );
+    }
+
+    return transportResult;
   }
 
   if (mode === "LOCAL_SIMULATED_EXTERNAL") {
+    const requestValidation = validateTrialComputeRequest_(snapshot);
+    if (requestValidation.ok !== true) {
+      return {
+        ok: false,
+        contractVersion: "transport_trial_result_v1",
+        expectedRequestContractVersion: requestValidation.expectedContractVersion || "compute_snapshot_v2",
+        requestContractVersion: snapshot && snapshot.contractVersion ? snapshot.contractVersion : null,
+        message: requestValidation.message || "Invalid compute request body.",
+        requestValidation: requestValidation
+      };
+    }
+
     const outboundRequestBody = cloneViaJsonTransport_(snapshot);
     const workerResponseBody = runLocalComputeWorkerFromRequest_(outboundRequestBody, options);
-    return cloneViaJsonTransport_(workerResponseBody);
+    const inboundTransportResult = cloneViaJsonTransport_(workerResponseBody);
+    const responseValidation = validateTransportTrialResult_(inboundTransportResult);
+
+    if (responseValidation.ok !== true) {
+      return buildInvalidTransportResponseResult_(
+        "Invalid compute response body: " + (responseValidation.message || "response body is invalid."),
+        responseValidation,
+        {
+          invocationMode: mode,
+          responseContractVersion: inboundTransportResult && inboundTransportResult.contractVersion
+            ? inboundTransportResult.contractVersion
+            : null,
+          expectedResponseContractVersion: responseValidation.expectedContractVersion || "transport_trial_result_v1"
+        }
+      );
+    }
+
+    return inboundTransportResult;
   }
 
   return {
