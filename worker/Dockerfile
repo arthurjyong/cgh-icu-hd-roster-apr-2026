@@ -1,7 +1,6 @@
 FROM node:20-slim
 
 ENV NODE_ENV=production \
-    PORT=8080 \
     TRIAL_COMPUTE_PROJECT_ROOT=/app
 
 WORKDIR /app
