@@ -92,6 +92,86 @@ function validateInboundTransportResultOrBuildError_(transportResult, mode) {
   return null;
 }
 
+function buildExternalHttpInvocationErrorResult_(message, extraFields) {
+  const result = {
+    ok: false,
+    contractVersion: "transport_trial_result_v1",
+    invocationMode: "EXTERNAL_HTTP",
+    message: message || "External HTTP invocation failed."
+  };
+
+  const extra = extraFields || {};
+  const keys = Object.keys(extra);
+  for (let i = 0; i < keys.length; i++) {
+    result[keys[i]] = extra[keys[i]];
+  }
+
+  return result;
+}
+
+function clipExternalHttpTextPreview_(value, maxLength) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const text = String(value);
+  const limit = typeof maxLength === "number" && maxLength > 0 ? maxLength : 500;
+
+  if (text.length <= limit) {
+    return text;
+  }
+
+  return text.slice(0, limit) + "...";
+}
+
+function parseExternalHttpJsonResponse_(responseText) {
+  if (responseText === null || responseText === undefined || responseText === "") {
+    return {
+      ok: false,
+      message: "External HTTP response body is empty."
+    };
+  }
+
+  try {
+    return {
+      ok: true,
+      value: JSON.parse(responseText)
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: "External HTTP response body is not valid JSON.",
+      parseError: error && error.message ? error.message : String(error),
+      responseTextPreview: clipExternalHttpTextPreview_(responseText, 1000)
+    };
+  }
+}
+
+function buildExternalHttpNonSuccessResult_(httpStatus, responseText, extraFields) {
+  const parsed = parseExternalHttpJsonResponse_(responseText);
+  const result = buildExternalHttpInvocationErrorResult_(
+    "External HTTP compute returned HTTP " + httpStatus + ".",
+    {
+      httpStatus: httpStatus,
+      responseTextPreview: clipExternalHttpTextPreview_(responseText, 1000)
+    }
+  );
+
+  if (parsed.ok === true && parsed.value && typeof parsed.value === "object" && !Array.isArray(parsed.value)) {
+    result.remoteErrorBody = parsed.value;
+  } else if (parsed.ok !== true) {
+    result.responseParseError = parsed.message;
+  }
+
+  const extra = extraFields || {};
+  const keys = Object.keys(extra);
+  for (let i = 0; i < keys.length; i++) {
+    result[keys[i]] = extra[keys[i]];
+  }
+
+  return result;
+}
+
 function invokeTrialComputeLocalDirect_(snapshot, options) {
   const requestValidation = validateTrialComputeRequest_(snapshot);
   if (requestValidation.ok !== true) {
@@ -136,12 +216,94 @@ function invokeTrialComputeExternalHttp_(snapshot, options) {
     return buildInvalidComputeRequestResult_(snapshot, requestValidation, "EXTERNAL_HTTP");
   }
 
-  return {
-    ok: false,
-    contractVersion: "transport_trial_result_v1",
-    invocationMode: "EXTERNAL_HTTP",
-    message: "EXTERNAL_HTTP invocation mode is not implemented yet."
-  };
+  const config = getTrialComputeExternalHttpConfig_();
+  const configValidation = validateTrialComputeExternalHttpConfig_(config);
+  if (configValidation.ok !== true) {
+    return buildExternalHttpInvocationErrorResult_(
+      "External HTTP config is invalid: " + configValidation.message,
+      {
+        configValidation: configValidation
+      }
+    );
+  }
+
+  const outboundRequestBody = cloneViaJsonTransport_(snapshot);
+  const requestBodyText = JSON.stringify(outboundRequestBody);
+  const requestUrl = configValidation.url;
+  let response;
+
+  try {
+    response = UrlFetchApp.fetch(requestUrl, {
+      method: "post",
+      contentType: "application/json; charset=utf-8",
+      headers: {
+        Authorization: "Bearer " + config.token.trim()
+      },
+      payload: requestBodyText,
+      muteHttpExceptions: true
+    });
+  } catch (error) {
+    return buildExternalHttpInvocationErrorResult_(
+      "External HTTP request failed: " + (error && error.message ? error.message : String(error)),
+      {
+        requestUrl: requestUrl,
+        requestContractVersion: outboundRequestBody.contractVersion || null,
+        requestBodyBytes: requestBodyText.length
+      }
+    );
+  }
+
+  const httpStatus = response.getResponseCode();
+  const responseText = response.getContentText();
+
+  if (httpStatus < 200 || httpStatus >= 300) {
+    return buildExternalHttpNonSuccessResult_(httpStatus, responseText, {
+      requestUrl: requestUrl,
+      requestContractVersion: outboundRequestBody.contractVersion || null
+    });
+  }
+
+  const parsed = parseExternalHttpJsonResponse_(responseText);
+  if (parsed.ok !== true) {
+    return buildExternalHttpInvocationErrorResult_(parsed.message, {
+      requestUrl: requestUrl,
+      httpStatus: httpStatus,
+      requestContractVersion: outboundRequestBody.contractVersion || null,
+      parseError: parsed.parseError || null,
+      responseTextPreview: parsed.responseTextPreview || null
+    });
+  }
+
+  const inboundTransportResult = cloneViaJsonTransport_(parsed.value);
+
+  if (!inboundTransportResult || typeof inboundTransportResult !== "object" || Array.isArray(inboundTransportResult)) {
+    return buildExternalHttpInvocationErrorResult_(
+      "External HTTP response JSON must be an object.",
+      {
+        requestUrl: requestUrl,
+        httpStatus: httpStatus,
+        requestContractVersion: outboundRequestBody.contractVersion || null
+      }
+    );
+  }
+
+  if (inboundTransportResult.ok === false) {
+    inboundTransportResult.invocationMode = inboundTransportResult.invocationMode || "EXTERNAL_HTTP";
+    return inboundTransportResult;
+  }
+
+  const invalidResponseResult = validateInboundTransportResultOrBuildError_(
+    inboundTransportResult,
+    "EXTERNAL_HTTP"
+  );
+
+  if (invalidResponseResult) {
+    invalidResponseResult.httpStatus = httpStatus;
+    invalidResponseResult.requestUrl = requestUrl;
+    return invalidResponseResult;
+  }
+
+  return inboundTransportResult;
 }
 
 function invokeTrialCompute_(snapshot, options) {

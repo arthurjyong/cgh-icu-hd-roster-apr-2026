@@ -29,6 +29,12 @@ function runWriteBestRandomTrialToSheetSimulatedExternal() {
   });
 }
 
+function runWriteBestRandomTrialToSheetExternalHttp() {
+  runWriteBestRandomTrialToSheetWithInvocationOptions_({
+    mode: "EXTERNAL_HTTP"
+  });
+}
+
 function debugLocalDirectTransportTrialResult() {
   debugTransportTrialResultForInvocationMode_("LOCAL_DIRECT");
 }
