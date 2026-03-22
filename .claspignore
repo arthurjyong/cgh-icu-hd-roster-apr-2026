@@ -1,2 +1,5 @@
-**/worker/**
-.claspignore
+**/**
+!appsscript.json
+!*.js
+!*.gs
+!*.html
