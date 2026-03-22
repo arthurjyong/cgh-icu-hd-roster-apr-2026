@@ -588,3 +588,723 @@ function runWriteSelectedBenchmarkResultToSheet() {
     summaryWriteResult: imported.summaryWriteResult
   }, null, 2));
 }
+
+
+
+function getPhase13CampaignImportPropertyKeys_() {
+  return {
+    selectionMode: "PHASE13_CAMPAIGN_IMPORT_SELECTION_MODE",
+    selectedCampaignFolderName: "PHASE13_CAMPAIGN_IMPORT_SELECTED_CAMPAIGN_FOLDER_NAME",
+    selectedArtifactFileName: "PHASE13_CAMPAIGN_IMPORT_SELECTED_ARTIFACT_FILE_NAME"
+  };
+}
+
+function getPhase13CampaignImportDefaults_() {
+  return {
+    selectionMode: "LATEST",
+    artifactFileName: "benchmark_campaign_report_v1.json",
+    refreshSummarySheet: true
+  };
+}
+
+function normalizePhase13CampaignImportSelectionMode_(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "SELECTED") {
+    return "SELECTED";
+  }
+  return "LATEST";
+}
+
+function normalizeBenchmarkTrialsWriteMode_(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "REPLACE") {
+    return "REPLACE";
+  }
+  return "APPEND";
+}
+
+function getStoredPhase13CampaignImportSelection_() {
+  const keys = getPhase13CampaignImportPropertyKeys_();
+  const defaults = getPhase13CampaignImportDefaults_();
+  const properties = PropertiesService.getScriptProperties();
+
+  return {
+    selectionMode: normalizePhase13CampaignImportSelectionMode_(
+      properties.getProperty(keys.selectionMode) || defaults.selectionMode
+    ),
+    selectedCampaignFolderName: String(
+      properties.getProperty(keys.selectedCampaignFolderName) || ""
+    ).trim(),
+    selectedArtifactFileName: String(
+      properties.getProperty(keys.selectedArtifactFileName) || defaults.artifactFileName
+    ).trim() || defaults.artifactFileName
+  };
+}
+
+function persistPhase13CampaignImportSelection_(selection) {
+  const keys = getPhase13CampaignImportPropertyKeys_();
+  const defaults = getPhase13CampaignImportDefaults_();
+  const properties = PropertiesService.getScriptProperties();
+
+  const values = {};
+  values[keys.selectionMode] = normalizePhase13CampaignImportSelectionMode_(
+    selection && selection.selectionMode
+  );
+  values[keys.selectedCampaignFolderName] = selection && selection.selectedCampaignFolderName
+    ? String(selection.selectedCampaignFolderName).trim()
+    : "";
+  values[keys.selectedArtifactFileName] = selection && selection.selectedArtifactFileName
+    ? String(selection.selectedArtifactFileName).trim()
+    : defaults.artifactFileName;
+
+  properties.setProperties(values, false);
+}
+
+function setPhase13CampaignImportLatestSelection() {
+  persistPhase13CampaignImportSelection_({
+    selectionMode: "LATEST"
+  });
+
+  Logger.log(JSON.stringify({
+    ok: true,
+    message: "Phase 13 campaign import selection set to LATEST.",
+    selection: getStoredPhase13CampaignImportSelection_()
+  }, null, 2));
+}
+
+function setPhase13CampaignImportSelectedCampaignFolder(campaignFolderName) {
+  const trimmed = String(campaignFolderName || "").trim();
+  if (!trimmed) {
+    throw new Error("campaignFolderName is required.");
+  }
+
+  persistPhase13CampaignImportSelection_({
+    selectionMode: "SELECTED",
+    selectedCampaignFolderName: trimmed
+  });
+
+  Logger.log(JSON.stringify({
+    ok: true,
+    message: "Phase 13 campaign import selection set to SELECTED.",
+    selection: getStoredPhase13CampaignImportSelection_()
+  }, null, 2));
+}
+
+function setPhase13CampaignImportSelectedArtifactFileName(artifactFileName) {
+  const trimmed = String(artifactFileName || "").trim();
+  if (!trimmed) {
+    throw new Error("artifactFileName is required.");
+  }
+
+  const current = getStoredPhase13CampaignImportSelection_();
+  current.selectedArtifactFileName = trimmed;
+  persistPhase13CampaignImportSelection_(current);
+
+  Logger.log(JSON.stringify({
+    ok: true,
+    message: "Phase 13 campaign import artifact filename updated.",
+    selection: getStoredPhase13CampaignImportSelection_()
+  }, null, 2));
+}
+
+function clearPhase13CampaignImportSelectedCampaignFolder() {
+  const current = getStoredPhase13CampaignImportSelection_();
+  current.selectedCampaignFolderName = "";
+  persistPhase13CampaignImportSelection_(current);
+
+  Logger.log(JSON.stringify({
+    ok: true,
+    message: "Phase 13 campaign import selected campaign folder cleared.",
+    selection: getStoredPhase13CampaignImportSelection_()
+  }, null, 2));
+}
+
+function debugGetPhase13CampaignImportSelection() {
+  Logger.log(JSON.stringify({
+    ok: true,
+    selection: getStoredPhase13CampaignImportSelection_()
+  }, null, 2));
+}
+
+function buildPhase13CampaignImportOptions_(overrides) {
+  const defaults = getPhase13CampaignImportDefaults_();
+  const stored = getStoredPhase13CampaignImportSelection_();
+  const options = {
+    selectionMode: stored.selectionMode,
+    selectedCampaignFolderName: stored.selectedCampaignFolderName,
+    selectedArtifactFileName: stored.selectedArtifactFileName,
+    writeMode: "APPEND",
+    refreshSummarySheet: defaults.refreshSummarySheet
+  };
+
+  const extra = overrides || {};
+  const keys = Object.keys(extra);
+  for (let i = 0; i < keys.length; i++) {
+    options[keys[i]] = extra[keys[i]];
+  }
+
+  options.selectionMode = normalizePhase13CampaignImportSelectionMode_(options.selectionMode);
+  options.selectedCampaignFolderName = String(options.selectedCampaignFolderName || "").trim();
+  options.selectedArtifactFileName = String(
+    options.selectedArtifactFileName || defaults.artifactFileName
+  ).trim() || defaults.artifactFileName;
+  options.writeMode = normalizeBenchmarkTrialsWriteMode_(options.writeMode);
+  options.refreshSummarySheet = options.refreshSummarySheet !== false;
+
+  return options;
+}
+
+function findSingleCampaignFolderByNameOrNull_(benchmarkRunsFolder, campaignFolderName) {
+  const iterator = benchmarkRunsFolder.getFoldersByName(campaignFolderName);
+  const matches = [];
+
+  while (iterator.hasNext() && matches.length < 2) {
+    matches.push(iterator.next());
+  }
+
+  if (matches.length === 0) {
+    return {
+      ok: true,
+      folder: null,
+      matchCount: 0
+    };
+  }
+
+  if (matches.length > 1 || iterator.hasNext()) {
+    return {
+      ok: false,
+      message:
+        'Multiple benchmark campaign folders named "' + campaignFolderName + '" were found under benchmark_runs.'
+    };
+  }
+
+  return {
+    ok: true,
+    folder: matches[0],
+    matchCount: 1
+  };
+}
+
+function findSingleFileByNameInFolder_(folder, fileName) {
+  const iterator = folder.getFilesByName(fileName);
+  const files = [];
+
+  while (iterator.hasNext()) {
+    files.push(iterator.next());
+  }
+
+  if (files.length === 0) {
+    return {
+      ok: false,
+      message: 'File "' + fileName + '" not found in folder "' + folder.getName() + '".'
+    };
+  }
+
+  if (files.length > 1) {
+    return {
+      ok: false,
+      message: 'Multiple files named "' + fileName + '" were found in folder "' + folder.getName() + '".'
+    };
+  }
+
+  return {
+    ok: true,
+    file: files[0]
+  };
+}
+
+function chooseLatestBenchmarkCampaignReportFile_(candidates) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return null;
+  }
+
+  let latest = candidates[0];
+  let latestTime = latest.file.getLastUpdated().getTime();
+
+  for (let i = 1; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    const candidateTime = candidate.file.getLastUpdated().getTime();
+
+    if (candidateTime > latestTime) {
+      latest = candidate;
+      latestTime = candidateTime;
+      continue;
+    }
+
+    if (candidateTime === latestTime) {
+      if (String(candidate.campaignFolderName) > String(latest.campaignFolderName)) {
+        latest = candidate;
+        latestTime = candidateTime;
+      }
+    }
+  }
+
+  return latest;
+}
+
+function resolveSelectedBenchmarkCampaignReportFile_(options) {
+  const benchmarkRunsFolder = getPhase12BenchmarkRunsFolder_();
+  const campaignFolderName = options.selectedCampaignFolderName;
+  const artifactFileName = options.selectedArtifactFileName;
+
+  if (!campaignFolderName) {
+    throw new Error(
+      "SELECTED mode requires Script Property PHASE13_CAMPAIGN_IMPORT_SELECTED_CAMPAIGN_FOLDER_NAME."
+    );
+  }
+
+  const folderMatch = findSingleCampaignFolderByNameOrNull_(benchmarkRunsFolder, campaignFolderName);
+  if (folderMatch.ok !== true) {
+    throw new Error(folderMatch.message || "Failed to resolve selected benchmark campaign folder.");
+  }
+
+  if (!folderMatch.folder) {
+    throw new Error('Benchmark campaign folder not found: "' + campaignFolderName + '".');
+  }
+
+  const fileMatch = findSingleFileByNameInFolder_(folderMatch.folder, artifactFileName);
+  if (fileMatch.ok !== true) {
+    throw new Error(fileMatch.message || "Failed to resolve selected benchmark campaign report file.");
+  }
+
+  return {
+    selectionMode: "SELECTED",
+    benchmarkRunsFolderId: benchmarkRunsFolder.getId(),
+    campaignFolder: folderMatch.folder,
+    campaignFolderName: folderMatch.folder.getName(),
+    file: fileMatch.file,
+    fileName: fileMatch.file.getName()
+  };
+}
+
+function resolveLatestBenchmarkCampaignReportFile_(options) {
+  const benchmarkRunsFolder = getPhase12BenchmarkRunsFolder_();
+  const artifactFileName = options.selectedArtifactFileName;
+  const campaignFolders = benchmarkRunsFolder.getFolders();
+  const candidates = [];
+
+  while (campaignFolders.hasNext()) {
+    const campaignFolder = campaignFolders.next();
+    const fileMatch = findSingleFileByNameInFolder_(campaignFolder, artifactFileName);
+
+    if (fileMatch.ok === true) {
+      candidates.push({
+        campaignFolder: campaignFolder,
+        campaignFolderName: campaignFolder.getName(),
+        file: fileMatch.file,
+        fileName: fileMatch.file.getName()
+      });
+    }
+  }
+
+  if (candidates.length === 0) {
+    throw new Error(
+      'No benchmark campaign report file named "' + artifactFileName + '" was found under benchmark_runs.'
+    );
+  }
+
+  const latest = chooseLatestBenchmarkCampaignReportFile_(candidates);
+
+  return {
+    selectionMode: "LATEST",
+    benchmarkRunsFolderId: benchmarkRunsFolder.getId(),
+    campaignFolder: latest.campaignFolder,
+    campaignFolderName: latest.campaignFolderName,
+    file: latest.file,
+    fileName: latest.fileName
+  };
+}
+
+function resolveBenchmarkCampaignReportFile_(options) {
+  if (options.selectionMode === "SELECTED") {
+    return resolveSelectedBenchmarkCampaignReportFile_(options);
+  }
+
+  return resolveLatestBenchmarkCampaignReportFile_(options);
+}
+
+function isFiniteNumberValue_(value) {
+  return typeof value === "number" && isFinite(value);
+}
+
+function validateBenchmarkCampaignRun_(run, index) {
+  const prefix = "runs[" + index + "]";
+
+  if (!run || typeof run !== "object" || Array.isArray(run)) {
+    return {
+      ok: false,
+      message: prefix + " must be an object."
+    };
+  }
+
+  if (!String(run.runId || "").trim()) {
+    return {
+      ok: false,
+      message: prefix + '.runId is required.'
+    };
+  }
+
+  if (!isFiniteNumberValue_(run.trialCount)) {
+    return {
+      ok: false,
+      message: prefix + '.trialCount must be a finite number.'
+    };
+  }
+
+  if (!isFiniteNumberValue_(run.repeatIndex)) {
+    return {
+      ok: false,
+      message: prefix + '.repeatIndex must be a finite number.'
+    };
+  }
+
+  if (typeof run.ok !== "boolean") {
+    return {
+      ok: false,
+      message: prefix + '.ok must be boolean.'
+    };
+  }
+
+  if (run.scoring !== undefined && run.scoring !== null) {
+    if (typeof run.scoring !== "object" || Array.isArray(run.scoring)) {
+      return {
+        ok: false,
+        message: prefix + '.scoring must be an object when provided.'
+      };
+    }
+  }
+
+  return {
+    ok: true
+  };
+}
+
+function validateBenchmarkCampaignReport_(report) {
+  if (!report || typeof report !== "object" || Array.isArray(report)) {
+    return {
+      ok: false,
+      message: "Campaign report must be an object."
+    };
+  }
+
+  if (report.contractVersion !== "benchmark_campaign_report_v1") {
+    return {
+      ok: false,
+      message: 'Unsupported campaign report contractVersion: "' + report.contractVersion + '".'
+    };
+  }
+
+  if (!report.campaign || typeof report.campaign !== "object" || Array.isArray(report.campaign)) {
+    return {
+      ok: false,
+      message: "Campaign report is missing campaign metadata."
+    };
+  }
+
+  if (!String(report.campaign.batchLabel || "").trim()) {
+    return {
+      ok: false,
+      message: "Campaign report campaign.batchLabel is required."
+    };
+  }
+
+  if (!Array.isArray(report.runs)) {
+    return {
+      ok: false,
+      message: "Campaign report runs must be an array."
+    };
+  }
+
+  for (let i = 0; i < report.runs.length; i++) {
+    const validation = validateBenchmarkCampaignRun_(report.runs[i], i);
+    if (validation.ok !== true) {
+      return validation;
+    }
+  }
+
+  return {
+    ok: true,
+    runCount: report.runs.length
+  };
+}
+
+function loadBenchmarkCampaignReportFromDrive_(overrides) {
+  const options = buildPhase13CampaignImportOptions_(overrides);
+  const resolved = resolveBenchmarkCampaignReportFile_(options);
+  const rawText = readUtf8TextFromDriveFile_(resolved.file);
+  const report = parseJsonOrThrow_(
+    rawText,
+    resolved.campaignFolderName + "/" + resolved.file.getName()
+  );
+  const validation = validateBenchmarkCampaignReport_(report);
+
+  if (validation.ok !== true) {
+    throw new Error(validation.message || "Imported benchmark campaign report failed validation.");
+  }
+
+  return {
+    ok: true,
+    options: options,
+    selectionMode: resolved.selectionMode,
+    benchmarkRunsFolderId: resolved.benchmarkRunsFolderId,
+    campaignFolderId: resolved.campaignFolder.getId(),
+    campaignFolderName: resolved.campaignFolderName,
+    artifactFileId: resolved.file.getId(),
+    artifactFileName: resolved.file.getName(),
+    artifactLastUpdated: resolved.file.getLastUpdated(),
+    artifactUrl: resolved.file.getUrl(),
+    reportValidation: validation,
+    report: report
+  };
+}
+
+function safeStringOrBlank_(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return value;
+}
+
+function safeFiniteNumberOrBlank_(value) {
+  return isFiniteNumberValue_(value) ? value : "";
+}
+
+function buildBenchmarkTrialsRowsFromCampaignReport_(report, importTimestamp) {
+  const campaign = report && report.campaign ? report.campaign : {};
+  const runs = report && Array.isArray(report.runs) ? report.runs : [];
+  const timestamp = importTimestamp || new Date();
+
+  return runs.map(function(run) {
+    const scoring = run && run.scoring && typeof run.scoring === "object" ? run.scoring : {};
+    const rowObject = {
+      ImportTimestamp: timestamp,
+      CampaignBatchLabel: safeStringOrBlank_(campaign.batchLabel),
+      SnapshotLabel: safeStringOrBlank_(run.snapshotFileName || campaign.snapshotFileName || ""),
+      SnapshotFileSha256: safeStringOrBlank_(run.snapshotFileSha256 || campaign.snapshotFileSha256 || ""),
+      TrialCount: safeFiniteNumberOrBlank_(run.trialCount),
+      RepeatIndex: safeFiniteNumberOrBlank_(run.repeatIndex),
+      RunId: safeStringOrBlank_(run.runId),
+      Ok: run.ok === true,
+      BestScore: safeFiniteNumberOrBlank_(run.bestScore),
+      BestTrialIndex: safeFiniteNumberOrBlank_(run.bestTrialIndex),
+      RuntimeMs: safeFiniteNumberOrBlank_(run.runtimeMs),
+      RuntimeSec: safeFiniteNumberOrBlank_(run.runtimeSec),
+      InvocationMode: safeStringOrBlank_(run.invocationMode),
+      Seed: safeStringOrBlank_(run.seed),
+      RunFolderName: safeStringOrBlank_(run.runFolderName),
+      ArtifactFileName: safeStringOrBlank_(run.artifactFileName),
+      MeanPoints: safeFiniteNumberOrBlank_(scoring.meanPoints),
+      StandardDeviation: safeFiniteNumberOrBlank_(scoring.standardDeviation),
+      Range: safeFiniteNumberOrBlank_(scoring.range),
+      TotalScore: safeFiniteNumberOrBlank_(
+        isFiniteNumberValue_(scoring.totalScore) ? scoring.totalScore : run.bestScore
+      ),
+      SummaryMessage: safeStringOrBlank_(run.summaryMessage),
+      FailureMessage: safeStringOrBlank_(run.failureMessage)
+    };
+
+    return buildBenchmarkTrialsRowFromObject_(rowObject);
+  });
+}
+
+function replaceBenchmarkTrialsRows_(rows) {
+  const sheet = ensureBenchmarkTrialsSheet_();
+  const header = getBenchmarkTrialsHeader_();
+
+  writeBenchmarkSheetHeaderRow_(sheet, header);
+
+  if (rows && rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, header.length).setValues(rows);
+  }
+
+  return {
+    ok: true,
+    sheetName: sheet.getName(),
+    writeMode: "REPLACE",
+    rowCount: rows ? rows.length : 0
+  };
+}
+
+function appendBenchmarkTrialsRows_(rows) {
+  appendBenchmarkRows_(rows);
+
+  return {
+    ok: true,
+    sheetName: getBenchmarkTrialsSheetName_(),
+    writeMode: "APPEND",
+    rowCount: rows ? rows.length : 0
+  };
+}
+
+function writeBenchmarkCampaignRowsToTrialsSheet_(rows, options) {
+  const settings = options || {};
+  const writeMode = normalizeBenchmarkTrialsWriteMode_(settings.writeMode);
+  let writeResult;
+
+  if (writeMode === "REPLACE") {
+    writeResult = replaceBenchmarkTrialsRows_(rows);
+  } else {
+    writeResult = appendBenchmarkTrialsRows_(rows);
+  }
+
+  let summaryWriteResult = null;
+  if (settings.refreshSummarySheet !== false) {
+    refreshBenchmarkSummarySheet();
+    summaryWriteResult = {
+      ok: true,
+      sheetName: getBenchmarkSummarySheetName_()
+    };
+  }
+
+  return {
+    ok: true,
+    writeMode: writeMode,
+    trialsWriteResult: writeResult,
+    summaryWriteResult: summaryWriteResult
+  };
+}
+
+function buildBenchmarkCampaignImportSummary_(loaded) {
+  const report = loaded.report || {};
+  const campaign = report.campaign || {};
+  const summary = report.summary || {};
+  const winner = report.winner || {};
+
+  return {
+    importTimestamp: new Date(),
+    selectionMode: loaded.selectionMode,
+    campaignFolderName: loaded.campaignFolderName,
+    artifactFileName: loaded.artifactFileName,
+    artifactFileId: loaded.artifactFileId,
+    artifactLastUpdated: loaded.artifactLastUpdated,
+    artifactUrl: loaded.artifactUrl,
+    contractVersion: report.contractVersion || null,
+    batchLabel: campaign.batchLabel || null,
+    snapshotFileName: campaign.snapshotFileName || null,
+    snapshotFileSha256: campaign.snapshotFileSha256 || null,
+    plannedRunCount: campaign.plannedRunCount || null,
+    importedRunCount: Array.isArray(report.runs) ? report.runs.length : 0,
+    completedCount: summary.completedCount || null,
+    okCount: summary.okCount || null,
+    failedCount: summary.failedCount || null,
+    winnerRunId: winner.runId || null,
+    winnerTrialCount: winner.trialCount || null,
+    winnerRepeatIndex: winner.repeatIndex || null,
+    winnerBestScore: winner.bestScore || null
+  };
+}
+
+function importBenchmarkCampaignReportToTrialsSheet_(overrides) {
+  const loaded = loadBenchmarkCampaignReportFromDrive_(overrides);
+  const importTimestamp = new Date();
+  const rows = buildBenchmarkTrialsRowsFromCampaignReport_(loaded.report, importTimestamp);
+  const writeResult = writeBenchmarkCampaignRowsToTrialsSheet_(rows, {
+    writeMode: loaded.options.writeMode,
+    refreshSummarySheet: loaded.options.refreshSummarySheet
+  });
+  const summary = buildBenchmarkCampaignImportSummary_(loaded);
+
+  return {
+    ok: true,
+    loaded: loaded,
+    summary: summary,
+    rows: rows,
+    writeResult: writeResult
+  };
+}
+
+function buildBenchmarkCampaignImportLogPayload_(imported) {
+  return {
+    ok: true,
+    selectionMode: imported.loaded.selectionMode,
+    campaignFolderName: imported.loaded.campaignFolderName,
+    artifactFileName: imported.loaded.artifactFileName,
+    artifactFileId: imported.loaded.artifactFileId,
+    artifactLastUpdated: imported.loaded.artifactLastUpdated,
+    reportValidation: imported.loaded.reportValidation,
+    summary: imported.summary,
+    writeResult: imported.writeResult
+  };
+}
+
+function debugInspectLatestBenchmarkCampaignReportFromDrive() {
+  const loaded = loadBenchmarkCampaignReportFromDrive_({
+    selectionMode: "LATEST"
+  });
+
+  Logger.log(JSON.stringify({
+    ok: true,
+    selectionMode: loaded.selectionMode,
+    campaignFolderName: loaded.campaignFolderName,
+    artifactFileName: loaded.artifactFileName,
+    artifactFileId: loaded.artifactFileId,
+    artifactLastUpdated: loaded.artifactLastUpdated,
+    artifactUrl: loaded.artifactUrl,
+    reportValidation: loaded.reportValidation,
+    contractVersion: loaded.report && loaded.report.contractVersion,
+    batchLabel: loaded.report && loaded.report.campaign ? loaded.report.campaign.batchLabel : null,
+    snapshotFileSha256: loaded.report && loaded.report.campaign ? loaded.report.campaign.snapshotFileSha256 : null,
+    runCount: loaded.report && Array.isArray(loaded.report.runs) ? loaded.report.runs.length : 0
+  }, null, 2));
+}
+
+function debugInspectSelectedBenchmarkCampaignReportFromDrive() {
+  const loaded = loadBenchmarkCampaignReportFromDrive_({
+    selectionMode: "SELECTED"
+  });
+
+  Logger.log(JSON.stringify({
+    ok: true,
+    selectionMode: loaded.selectionMode,
+    campaignFolderName: loaded.campaignFolderName,
+    artifactFileName: loaded.artifactFileName,
+    artifactFileId: loaded.artifactFileId,
+    artifactLastUpdated: loaded.artifactLastUpdated,
+    artifactUrl: loaded.artifactUrl,
+    reportValidation: loaded.reportValidation,
+    contractVersion: loaded.report && loaded.report.contractVersion,
+    batchLabel: loaded.report && loaded.report.campaign ? loaded.report.campaign.batchLabel : null,
+    snapshotFileSha256: loaded.report && loaded.report.campaign ? loaded.report.campaign.snapshotFileSha256 : null,
+    runCount: loaded.report && Array.isArray(loaded.report.runs) ? loaded.report.runs.length : 0
+  }, null, 2));
+}
+
+function runAppendLatestBenchmarkCampaignReportToTrialsSheet() {
+  const imported = importBenchmarkCampaignReportToTrialsSheet_({
+    selectionMode: "LATEST",
+    writeMode: "APPEND",
+    refreshSummarySheet: true
+  });
+
+  Logger.log(JSON.stringify(buildBenchmarkCampaignImportLogPayload_(imported), null, 2));
+}
+
+function runAppendSelectedBenchmarkCampaignReportToTrialsSheet() {
+  const imported = importBenchmarkCampaignReportToTrialsSheet_({
+    selectionMode: "SELECTED",
+    writeMode: "APPEND",
+    refreshSummarySheet: true
+  });
+
+  Logger.log(JSON.stringify(buildBenchmarkCampaignImportLogPayload_(imported), null, 2));
+}
+
+function runReplaceBenchmarkTrialsWithLatestCampaignReport() {
+  const imported = importBenchmarkCampaignReportToTrialsSheet_({
+    selectionMode: "LATEST",
+    writeMode: "REPLACE",
+    refreshSummarySheet: true
+  });
+
+  Logger.log(JSON.stringify(buildBenchmarkCampaignImportLogPayload_(imported), null, 2));
+}
+
+function runReplaceBenchmarkTrialsWithSelectedCampaignReport() {
+  const imported = importBenchmarkCampaignReportToTrialsSheet_({
+    selectionMode: "SELECTED",
+    writeMode: "REPLACE",
+    refreshSummarySheet: true
+  });
+
+  Logger.log(JSON.stringify(buildBenchmarkCampaignImportLogPayload_(imported), null, 2));
+}

@@ -8,30 +8,28 @@ function getBenchmarkSummarySheetName_() {
 
 function getBenchmarkTrialsHeader_() {
   return [
-    "Timestamp",
-    "BatchLabel",
+    "ImportTimestamp",
+    "CampaignBatchLabel",
+    "SnapshotLabel",
+    "SnapshotFileSha256",
     "TrialCount",
     "RepeatIndex",
+    "RunId",
     "Ok",
     "BestScore",
+    "BestTrialIndex",
     "RuntimeMs",
     "RuntimeSec",
-    "UnfilledPenalty",
-    "SpacingPenalty",
-    "PreLeavePenalty",
-    "CrReward",
-    "DualEligibleIcuBonus",
-    "StandbyAdjacencyPenalty",
-    "StandbyCountFairnessPenalty",
-    "PointBalanceWithinSection",
-    "PointBalanceGlobal",
+    "InvocationMode",
+    "Seed",
+    "RunFolderName",
+    "ArtifactFileName",
     "MeanPoints",
     "StandardDeviation",
-    "MinPoints",
-    "MaxPoints",
     "Range",
-    "ScorerConfigSource",
-    "Note"
+    "TotalScore",
+    "SummaryMessage",
+    "FailureMessage"
   ];
 }
 
@@ -71,22 +69,243 @@ function ensureBenchmarkSheet_(sheetName, headerRow) {
 }
 
 function ensureBenchmarkTrialsSheet_() {
-  return ensureBenchmarkSheet_(getBenchmarkTrialsSheetName_(), getBenchmarkTrialsHeader_());
+  const sheet = ensureBenchmarkSheet_(getBenchmarkTrialsSheetName_(), getBenchmarkTrialsHeader_());
+  ensureBenchmarkTrialsHeader_(sheet);
+  return sheet;
 }
 
 function ensureBenchmarkSummarySheet_() {
-  return ensureBenchmarkSheet_(getBenchmarkSummarySheetName_(), getBenchmarkSummaryHeader_());
+  const sheet = ensureBenchmarkSheet_(getBenchmarkSummarySheetName_(), getBenchmarkSummaryHeader_());
+  ensureBenchmarkSummaryHeader_(sheet);
+  return sheet;
 }
 
-function resetBenchmarkSheets() {
-  const trialsSheet = ensureBenchmarkTrialsSheet_();
-  const summarySheet = ensureBenchmarkSummarySheet_();
+function buildHeaderIndexMapFromRow_(headerRow) {
+  const map = {};
+  const row = Array.isArray(headerRow) ? headerRow : [];
 
-  trialsSheet.clearContents();
-  summarySheet.clearContents();
+  for (let i = 0; i < row.length; i++) {
+    const key = String(row[i] === null || row[i] === undefined ? "" : row[i]).trim();
+    if (key) {
+      map[key] = i;
+    }
+  }
+
+  return map;
+}
+
+function normalizeBenchmarkHeaderCell_(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).trim();
+}
+
+function benchmarkHeaderRowsMatch_(actualHeader, expectedHeader) {
+  if (!Array.isArray(actualHeader) || !Array.isArray(expectedHeader)) {
+    return false;
+  }
+
+  if (actualHeader.length !== expectedHeader.length) {
+    return false;
+  }
+
+  for (let i = 0; i < expectedHeader.length; i++) {
+    if (normalizeBenchmarkHeaderCell_(actualHeader[i]) !== normalizeBenchmarkHeaderCell_(expectedHeader[i])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function writeBenchmarkSheetHeaderRow_(sheet, headerRow) {
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, headerRow.length).setValues([headerRow]);
+  sheet.setFrozenRows(1);
+  sheet.getRange(1, 1, 1, headerRow.length).setFontWeight("bold");
+}
+
+function ensureBenchmarkSheetHeader_(sheet, headerRow) {
+  const expectedHeader = headerRow || [];
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow === 0) {
+    writeBenchmarkSheetHeaderRow_(sheet, expectedHeader);
+    return;
+  }
+
+  const actualHeader = sheet.getRange(1, 1, 1, expectedHeader.length).getValues()[0];
+  if (benchmarkHeaderRowsMatch_(actualHeader, expectedHeader)) {
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, expectedHeader.length).setFontWeight("bold");
+    return;
+  }
+
+  if (lastRow <= 1) {
+    writeBenchmarkSheetHeaderRow_(sheet, expectedHeader);
+    return;
+  }
+
+  throw new Error(
+    'Sheet "' + sheet.getName() + '" has an unexpected header for this version. ' +
+    "Run resetBenchmarkSheets() before writing new benchmark rows."
+  );
+}
+
+function ensureBenchmarkTrialsHeader_(sheet) {
+  ensureBenchmarkSheetHeader_(sheet, getBenchmarkTrialsHeader_());
+}
+
+function ensureBenchmarkSummaryHeader_(sheet) {
+  ensureBenchmarkSheetHeader_(sheet, getBenchmarkSummaryHeader_());
+}
+
+function normalizeBenchmarkRowCellValue_(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return value;
+}
+
+function buildBenchmarkTrialsRowFromObject_(rowObject) {
+  const header = getBenchmarkTrialsHeader_();
+  const source = rowObject || {};
+  const row = [];
+
+  for (let i = 0; i < header.length; i++) {
+    const key = header[i];
+    const hasValue = Object.prototype.hasOwnProperty.call(source, key);
+    row.push(hasValue ? normalizeBenchmarkRowCellValue_(source[key]) : "");
+  }
+
+  return row;
+}
+
+function getRequiredBenchmarkTrialsSummaryColumns_() {
+  return ["CampaignBatchLabel", "TrialCount", "Ok", "BestScore", "RuntimeSec"];
+}
+
+function getBenchmarkTrialsColumnMapFromSheet_(sheet) {
+  const lastColumn = Math.max(sheet.getLastColumn(), getBenchmarkTrialsHeader_().length);
+  const headerRow = lastColumn > 0
+    ? sheet.getRange(1, 1, 1, lastColumn).getValues()[0]
+    : [];
+  const map = buildHeaderIndexMapFromRow_(headerRow);
+  const required = getRequiredBenchmarkTrialsSummaryColumns_();
+
+  for (let i = 0; i < required.length; i++) {
+    if (typeof map[required[i]] !== "number") {
+      throw new Error(
+        'BENCHMARK_TRIALS header is missing required column "' + required[i] + '". ' +
+        "Run resetBenchmarkSheets() before refreshing summary."
+      );
+    }
+  }
+
+  return map;
+}
+
+function coerceBooleanLike_(value) {
+  if (value === true || value === false) {
+    return value;
+  }
+
+  const normalized = String(value === null || value === undefined ? "" : value)
+    .trim()
+    .toUpperCase();
+
+  if (normalized === "TRUE") {
+    return true;
+  }
+
+  if (normalized === "FALSE") {
+    return false;
+  }
+
+  return false;
+}
+
+function getFiniteNumberOrBlank_(value) {
+  return typeof value === "number" && isFinite(value) ? value : "";
+}
+
+function getFiniteNumberOrFallbackBlank_(primaryValue, fallbackValue) {
+  if (typeof primaryValue === "number" && isFinite(primaryValue)) {
+    return primaryValue;
+  }
+
+  if (typeof fallbackValue === "number" && isFinite(fallbackValue)) {
+    return fallbackValue;
+  }
+
+  return "";
+}
+
+function getBenchmarkNoteValue_(note, key) {
+  const text = String(note || "");
+  if (!text) {
+    return "";
+  }
+
+  const prefix = String(key || "").trim() + "=";
+  const parts = text.split(";");
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = String(parts[i]).trim();
+    if (part.indexOf(prefix) === 0) {
+      return part.substring(prefix.length).trim();
+    }
+  }
+
+  return "";
+}
+
+function getBestTrialIndexFromTransportResult_(transportResult) {
+  if (
+    transportResult
+    && transportResult.bestTrial
+    && typeof transportResult.bestTrial.index === "number"
+    && isFinite(transportResult.bestTrial.index)
+  ) {
+    return transportResult.bestTrial.index;
+  }
+
+  return "";
+}
+
+function getBestScoreFromTransportResult_(transportResult) {
+  if (
+    transportResult
+    && transportResult.bestTrial
+    && typeof transportResult.bestTrial.score === "number"
+    && isFinite(transportResult.bestTrial.score)
+  ) {
+    return transportResult.bestTrial.score;
+  }
+
+  return "";
+}
+
+
+function resetBenchmarkSheets() {
+  const ss = SpreadsheetApp.getActive();
+
+  let trialsSheet = ss.getSheetByName(getBenchmarkTrialsSheetName_());
+  if (!trialsSheet) {
+    trialsSheet = ss.insertSheet(getBenchmarkTrialsSheetName_());
+  }
+
+  let summarySheet = ss.getSheetByName(getBenchmarkSummarySheetName_());
+  if (!summarySheet) {
+    summarySheet = ss.insertSheet(getBenchmarkSummarySheetName_());
+  }
 
   const trialsHeader = getBenchmarkTrialsHeader_();
   const summaryHeader = getBenchmarkSummaryHeader_();
+
+  trialsSheet.clearContents();
+  summarySheet.clearContents();
 
   trialsSheet.getRange(1, 1, 1, trialsHeader.length).setValues([trialsHeader]);
   summarySheet.getRange(1, 1, 1, summaryHeader.length).setValues([summaryHeader]);
@@ -104,7 +323,7 @@ function appendBenchmarkRows_(rows) {
   if (!rows || rows.length === 0) return;
 
   const sheet = ensureBenchmarkTrialsSheet_();
-  const startRow = sheet.getLastRow() + 1;
+  const startRow = Math.max(sheet.getLastRow(), 1) + 1;
   const columnCount = getBenchmarkTrialsHeader_().length;
 
   sheet.getRange(startRow, 1, rows.length, columnCount).setValues(rows);
@@ -123,35 +342,38 @@ function buildBenchmarkRow_(batchLabel, trialCount, repeatIndex, runtimeMs, tria
   const timestamp = new Date();
   const bestScoring = trialResult && trialResult.bestScoring ? trialResult.bestScoring : null;
   const ok = !!(trialResult && trialResult.ok === true);
+  const bestScore = ok && trialResult && typeof trialResult.bestScore === "number" && isFinite(trialResult.bestScore)
+    ? trialResult.bestScore
+    : "";
+  const bestTrialIndex = trialResult && typeof trialResult.bestTrialIndex === "number" && isFinite(trialResult.bestTrialIndex)
+    ? trialResult.bestTrialIndex
+    : "";
+  const runtimeMsValue = getFiniteNumberOrBlank_(runtimeMs);
 
-  return [
-    timestamp,
-    batchLabel,
-    trialCount,
-    repeatIndex,
-    ok,
-    ok ? trialResult.bestScore : "",
-    runtimeMs,
-    runtimeMs / 1000,
-    safeComponentScore_(bestScoring, "unfilledPenalty"),
-    safeComponentScore_(bestScoring, "spacingPenalty"),
-    safeComponentScore_(bestScoring, "preLeavePenalty"),
-    safeComponentScore_(bestScoring, "crReward"),
-    safeComponentScore_(bestScoring, "dualEligibleIcuBonus"),
-    safeComponentScore_(bestScoring, "standbyAdjacencyPenalty"),
-    safeComponentScore_(bestScoring, "standbyCountFairnessPenalty"),
-    safeComponentScore_(bestScoring, "pointBalanceWithinSection"),
-    safeComponentScore_(bestScoring, "pointBalanceGlobal"),
-    bestScoring && typeof bestScoring.meanPoints === "number" ? bestScoring.meanPoints : "",
-    bestScoring && typeof bestScoring.standardDeviation === "number" ? bestScoring.standardDeviation : "",
-    bestScoring && typeof bestScoring.minPoints === "number" ? bestScoring.minPoints : "",
-    bestScoring && typeof bestScoring.maxPoints === "number" ? bestScoring.maxPoints : "",
-    bestScoring && typeof bestScoring.range === "number" ? bestScoring.range : "",
-    bestScoring && bestScoring.scorerConfig && bestScoring.scorerConfig.source
-      ? bestScoring.scorerConfig.source
-      : "",
-    ok ? "" : (trialResult && trialResult.message ? trialResult.message : "Unknown failure")
-  ];
+  return buildBenchmarkTrialsRowFromObject_({
+    ImportTimestamp: timestamp,
+    CampaignBatchLabel: batchLabel || "",
+    SnapshotLabel: "",
+    SnapshotFileSha256: "",
+    TrialCount: trialCount,
+    RepeatIndex: repeatIndex,
+    RunId: "",
+    Ok: ok,
+    BestScore: bestScore,
+    BestTrialIndex: bestTrialIndex,
+    RuntimeMs: runtimeMsValue,
+    RuntimeSec: typeof runtimeMsValue === "number" ? runtimeMsValue / 1000 : "",
+    InvocationMode: "LOCAL_DIRECT",
+    Seed: "",
+    RunFolderName: "",
+    ArtifactFileName: "",
+    MeanPoints: bestScoring && typeof bestScoring.meanPoints === "number" ? bestScoring.meanPoints : "",
+    StandardDeviation: bestScoring && typeof bestScoring.standardDeviation === "number" ? bestScoring.standardDeviation : "",
+    Range: bestScoring && typeof bestScoring.range === "number" ? bestScoring.range : "",
+    TotalScore: bestScore,
+    SummaryMessage: "",
+    FailureMessage: ok ? "" : (trialResult && trialResult.message ? trialResult.message : "Unknown failure")
+  });
 }
 
 function sortNumberListAscending_(values) {
@@ -217,22 +439,24 @@ function buildBenchmarkSummaryRows_() {
     return [];
   }
 
-  const data = trialsSheet.getRange(2, 1, lastRow - 1, getBenchmarkTrialsHeader_().length).getValues();
+  const columnCount = Math.max(trialsSheet.getLastColumn(), getBenchmarkTrialsHeader_().length);
+  const data = trialsSheet.getRange(2, 1, lastRow - 1, columnCount).getValues();
+  const col = getBenchmarkTrialsColumnMapFromSheet_(trialsSheet);
   const groups = {};
 
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
-    const batchLabel = row[1];
-    const trialCount = row[2];
-    const ok = row[4];
-    const bestScore = row[5];
-    const runtimeSec = row[7];
+    const batchLabel = row[col.CampaignBatchLabel];
+    const trialCount = row[col.TrialCount];
+    const ok = coerceBooleanLike_(row[col.Ok]);
+    const bestScore = row[col.BestScore];
+    const runtimeSec = row[col.RuntimeSec];
 
-    if (!ok || typeof bestScore !== "number") {
+    if (!ok || typeof bestScore !== "number" || !isFinite(bestScore)) {
       continue;
     }
 
-    const key = batchLabel + "||" + trialCount;
+    const key = String(batchLabel) + "||" + String(trialCount);
     if (!groups[key]) {
       groups[key] = {
         batchLabel: batchLabel,
@@ -243,7 +467,7 @@ function buildBenchmarkSummaryRows_() {
     }
 
     groups[key].scores.push(bestScore);
-    if (typeof runtimeSec === "number") {
+    if (typeof runtimeSec === "number" && isFinite(runtimeSec)) {
       groups[key].runtimes.push(runtimeSec);
     }
   }
@@ -253,11 +477,18 @@ function buildBenchmarkSummaryRows_() {
     const aGroup = groups[a];
     const bGroup = groups[b];
 
-    if (aGroup.batchLabel !== bGroup.batchLabel) {
+    if (String(aGroup.batchLabel) !== String(bGroup.batchLabel)) {
       return String(aGroup.batchLabel).localeCompare(String(bGroup.batchLabel));
     }
 
-    return aGroup.trialCount - bGroup.trialCount;
+    const aTrialCount = Number(aGroup.trialCount);
+    const bTrialCount = Number(bGroup.trialCount);
+
+    if (isFinite(aTrialCount) && isFinite(bTrialCount)) {
+      return aTrialCount - bTrialCount;
+    }
+
+    return String(aGroup.trialCount).localeCompare(String(bGroup.trialCount));
   });
 
   const summaryRows = [];
@@ -520,34 +751,46 @@ function buildBenchmarkRowFromTransportTrialResult_(batchLabel, trialCount, repe
   const bestTrial = transportResult && transportResult.bestTrial ? transportResult.bestTrial : null;
   const bestScoring = transportResult && transportResult.bestScoring ? transportResult.bestScoring : null;
   const scoringSummary = bestTrial && bestTrial.scoringSummary ? bestTrial.scoringSummary : null;
-  const scoringLike = bestScoring || scoringSummary;
+  const runtimeMsValue = getFiniteNumberOrBlank_(runtimeMs);
+  const bestScore = getBestScoreFromTransportResult_(transportResult);
+  const summaryMessage = ok
+    ? (transportResult && transportResult.message ? transportResult.message : (note || ""))
+    : "";
+  const failureMessage = ok
+    ? ""
+    : (transportResult && transportResult.message ? transportResult.message : (note || "Unknown failure"));
 
-  return [
-    timestamp,
-    batchLabel,
-    trialCount,
-    repeatIndex,
-    ok,
-    ok && bestTrial && typeof bestTrial.score === "number" ? bestTrial.score : "",
-    runtimeMs,
-    runtimeMs / 1000,
-    safeComponentScoreFromBestScoringLike_(scoringLike, "unfilledPenalty"),
-    safeComponentScoreFromBestScoringLike_(scoringLike, "spacingPenalty"),
-    safeComponentScoreFromBestScoringLike_(scoringLike, "preLeavePenalty"),
-    safeComponentScoreFromBestScoringLike_(scoringLike, "crReward"),
-    safeComponentScoreFromBestScoringLike_(scoringLike, "dualEligibleIcuBonus"),
-    safeComponentScoreFromBestScoringLike_(scoringLike, "standbyAdjacencyPenalty"),
-    safeComponentScoreFromBestScoringLike_(scoringLike, "standbyCountFairnessPenalty"),
-    safeComponentScoreFromBestScoringLike_(scoringLike, "pointBalanceWithinSection"),
-    safeComponentScoreFromBestScoringLike_(scoringLike, "pointBalanceGlobal"),
-    safeNumberFieldFromObjects_("meanPoints", bestScoring, scoringSummary),
-    safeNumberFieldFromObjects_("standardDeviation", bestScoring, scoringSummary),
-    safeNumberFieldFromObjects_("minPoints", bestScoring, scoringSummary),
-    safeNumberFieldFromObjects_("maxPoints", bestScoring, scoringSummary),
-    safeNumberFieldFromObjects_("range", bestScoring, scoringSummary),
-    safeScorerConfigSourceFromBestScoring_(bestScoring),
-    note || (ok ? "" : (transportResult && transportResult.message ? transportResult.message : "Unknown failure"))
-  ];
+  return buildBenchmarkTrialsRowFromObject_({
+    ImportTimestamp: timestamp,
+    CampaignBatchLabel: batchLabel || "",
+    SnapshotLabel: "",
+    SnapshotFileSha256: "",
+    TrialCount: trialCount,
+    RepeatIndex: repeatIndex,
+    RunId: "",
+    Ok: ok,
+    BestScore: bestScore,
+    BestTrialIndex: getBestTrialIndexFromTransportResult_(transportResult),
+    RuntimeMs: runtimeMsValue,
+    RuntimeSec: typeof runtimeMsValue === "number" ? runtimeMsValue / 1000 : "",
+    InvocationMode: transportResult && transportResult.invocationMode
+      ? transportResult.invocationMode
+      : getBenchmarkNoteValue_(note, "mode"),
+    Seed: transportResult && transportResult.trialSpec && transportResult.trialSpec.seed !== undefined
+      ? transportResult.trialSpec.seed
+      : getBenchmarkNoteValue_(note, "seed"),
+    RunFolderName: "",
+    ArtifactFileName: "",
+    MeanPoints: safeNumberFieldFromObjects_("meanPoints", bestScoring, scoringSummary),
+    StandardDeviation: safeNumberFieldFromObjects_("standardDeviation", bestScoring, scoringSummary),
+    Range: safeNumberFieldFromObjects_("range", bestScoring, scoringSummary),
+    TotalScore: getFiniteNumberOrFallbackBlank_(
+      safeNumberFieldFromObjects_("totalScore", bestScoring, scoringSummary),
+      bestScore
+    ),
+    SummaryMessage: summaryMessage,
+    FailureMessage: failureMessage
+  });
 }
 
 function buildExternalBenchmarkNote_(seed, invocationOptions, extraMessage) {
