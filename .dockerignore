@@ -1,0 +1,29 @@
+# Note:
+# This file is useful as a template, but Docker only reads ignore rules
+# from the build context root (or a Dockerfile-specific ignore file).
+# If you build with:
+#   docker build -f worker/Dockerfile .
+# then place these same rules in either:
+#   1) repo-root .dockerignore, or
+#   2) worker/Dockerfile.dockerignore
+
+.git
+.git/**
+node_modules
+node_modules/**
+worker/node_modules
+worker/node_modules/**
+.DS_Store
+README.md
+benchmark_trials.js
+allocator_greedy.js
+parser_*.js
+Code.js
+writer_output.js
+engine_invoke.js
+engine_http_config.js
+appsscript.json
+.clasp.json
+.claspignore
+compute_snapshot_v2_seed*.json
+worker_response.json
