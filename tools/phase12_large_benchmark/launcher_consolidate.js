@@ -3,7 +3,7 @@
 function getComparableScore(record) {
   return record && typeof record.bestScore === 'number'
     ? record.bestScore
-    : Number.NEGATIVE_INFINITY;
+    : Number.POSITIVE_INFINITY;
 }
 
 function getComparableChunkNumber(record) {
@@ -19,7 +19,7 @@ function getComparableBestTrialIndex(record) {
 }
 
 function compareWinnerRecords(left, right) {
-  const scoreDiff = getComparableScore(right) - getComparableScore(left);
+  const scoreDiff = getComparableScore(left) - getComparableScore(right);
   if (scoreDiff !== 0) {
     return scoreDiff;
   }
@@ -49,7 +49,7 @@ function getComparableRunId(record) {
 }
 
 function compareCampaignRunRecords(left, right) {
-  const scoreDiff = getComparableScore(right) - getComparableScore(left);
+  const scoreDiff = getComparableScore(left) - getComparableScore(right);
   if (scoreDiff !== 0) {
     return scoreDiff;
   }
