@@ -25,8 +25,19 @@ Current state:
 - public Cloud Run worker deployment implemented
 - external worker compute path implemented and validated
 - parity validated across local direct, simulated external, and public external HTTP modes
+- Apps Script Drive folder/config boundary implemented
+- Apps Script snapshot export to Drive implemented
+- local large-benchmark launcher implemented
+- local chunked benchmark consolidation implemented
+- local checkpoint/resume implemented
+- launcher Drive upload via desktop OAuth implemented
+- Apps Script Drive import of benchmark result implemented
+- Apps Script benchmark summary sheet write implemented
+- Apps Script import-to-sheet writeback implemented
 
-The system is usable in Google Sheets today. Large random-trial counts are increasingly limited by Apps Script runtime, but the external compute path is now operational for offloading heavy trial batches.
+The system is usable in Google Sheets today.
+
+Normal in-sheet allocation remains available for practical runs. Very large random-trial counts are better handled through the Phase 12 external benchmarking path, which is now operational end-to-end.
 
 ## Purpose
 
@@ -67,8 +78,11 @@ Apps Script currently handles:
   - local direct
   - local simulated external
   - public external HTTP worker
+- exporting validated snapshots to Google Drive
+- importing benchmark result artifacts from Google Drive
 - validating transport-friendly trial results before sheet writeback
 - writing the best result back to the sheet
+- writing benchmark import summaries to a dedicated sheet tab
 
 Headless compute currently handles:
 - consuming the normalized compute snapshot
@@ -82,6 +96,14 @@ External worker currently handles:
 - validating request structure
 - running headless random trials
 - returning a `transport_trial_result_v1` response
+
+Local Phase 12 launcher currently handles:
+- reading exported snapshot artifacts
+- planning large trial runs in deterministic chunks
+- invoking the Cloud Run worker chunk-by-chunk
+- consolidating global best and bounded top-N chunk winners
+- checkpoint/resume
+- uploading final run artifacts back to Google Drive
 
 The codebase is intentionally structured in layers so the heavy allocation/scoring path can run outside Apps Script without redesigning roster rules or moving sheet read/write into the compute engine.
 
@@ -159,6 +181,60 @@ Operational notes:
 - Google Sheets + Apps Script remain the live UI/controller
 - external worker remains compute-only
 
+## Phase 12 status — large external benchmarking via Drive + local launcher
+
+Completed:
+- Apps Script Drive root/config boundary implemented
+- Drive root folder:
+  - `cgh-icu-hd-roster-apr-2026`
+- Drive subfolders:
+  - `snapshots`
+  - `benchmark_runs`
+- Script Properties persistence of Drive folder IDs implemented
+- Apps Script snapshot export to Drive implemented
+- local large-benchmark launcher implemented under:
+  - `tools/phase12_large_benchmark/`
+- deterministic chunk planning implemented
+- chunked worker invocation implemented
+- local artifact consolidation implemented
+- local checkpoint/resume implemented
+- launcher upload to Drive via desktop OAuth implemented
+- Apps Script import of benchmark result from Drive implemented
+- Apps Script summary print to `Phase12_Benchmark_Import` implemented
+- Apps Script writeback of imported winning allocation to `Sheet1` rows 35–38 implemented
+
+Current Drive artifact layout:
+- `cgh-icu-hd-roster-apr-2026/`
+  - `snapshots/`
+  - `benchmark_runs/`
+
+Each benchmark run folder under `benchmark_runs/` may contain:
+- `run_manifest.json`
+- `global_best.transport_trial_result_v1.json`
+- `top_chunks_summary.json`
+- `top_chunks/`
+
+Validated live:
+- snapshot export to Drive works
+- local launcher chunk planning works
+- worker execution and consolidation work
+- checkpoint/resume works
+- Drive upload works
+- latest benchmark import from Drive works
+- benchmark summary sheet write works
+- imported allocation writeback to rows 35–38 works
+
+Current operational reality:
+- Apps Script remains the UI/controller
+- Cloud Run remains compute-only
+- local launcher owns long chunked benchmark runs
+- imported benchmark results reuse the existing writer path rather than replacing it
+
+Known caveat:
+- selected-run import support is implemented in Apps Script
+- latest-import path has been validated live
+- distinct selected-run validation against two different uploaded run folders is still pending simply because only one run folder currently exists in `benchmark_runs`
+
 ## Project structure
 
 Current source files are organized roughly as follows:
@@ -178,7 +254,11 @@ Current source files are organized roughly as follows:
 - `engine_invoke.js` — invocation-mode wiring for local and external compute
 - `writer_output.js` — write output back to Google Sheets and validate transport results before writeback
 - `benchmark_trials.js` — benchmark repeated trial counts
+- `benchmark_drive_config.js` — Apps Script Drive folder/config helpers for Phase 12
+- `benchmark_snapshot_export.js` — Apps Script snapshot export to Drive
+- `benchmark_result_import.js` — Apps Script benchmark result import from Drive and summary/writeback helpers
 - `Code.js` — top-level Apps Script entry points
+- `tools/phase12_large_benchmark/` — local large-benchmark launcher and related tooling
 - `worker/server.js` — external HTTP worker server
 - `worker/load_pure_compute.js` — worker bootstrap for pure compute runtime
 - `worker/package.json` — worker package definition
@@ -200,7 +280,9 @@ Important notes:
 - `clasp` is the Apps Script sync path
 - there is no native direct GitHub-to-Apps Script live sync
 - Google Sheets + Apps Script remain the live UI/controller
-- `worker/` is intentionally excluded from Apps Script push via `.claspignore`
+- local tooling and non-Apps-Script folders must be excluded from Apps Script push via `.claspignore`
+
+Current `.claspignore` pattern should effectively allow only root-level Apps Script source files and the manifest, so local launcher folders and `node_modules` are not pushed into Apps Script.
 
 ## Allocation model
 
@@ -285,7 +367,6 @@ If the `SCORER_CONFIG` tab exists, it must be valid. Invalid config is treated a
 ### `SCORER_CONFIG` tab
 
 The `SCORER_CONFIG` tab is created or refreshed by running:
-
 - `setupScorerConfigSheet()`
 
 This tab is designed to be both machine-readable and human-readable.
@@ -343,6 +424,21 @@ Useful entry points and helpers include:
 - `runWriteBestRandomTrialToSheet()` — run allocation and write the best result back to the sheet
 - `runWriteBestRandomTrialToSheetExternalHttp()` — run allocation via public external worker and write the best result back to the sheet
 
+Phase 12 Drive/export/import helpers include:
+- `debugEnsurePhase12BenchmarkDriveLayout()` — ensure Drive root and subfolders exist
+- `debugExportComputeSnapshotToDrive()` — export `compute_snapshot_v2` snapshot to Drive
+- `debugInspectLatestBenchmarkResultFromDrive()` — inspect latest uploaded benchmark result artifact
+- `runPrintLatestBenchmarkResultSummaryToSheet()` — import latest benchmark result and print summary sheet
+- `runWriteLatestBenchmarkResultToSheet()` — import latest benchmark result and write winning allocation to rows 35–38
+- `debugInspectSelectedBenchmarkResultFromDrive()` — inspect selected benchmark result artifact
+- `runPrintSelectedBenchmarkResultSummaryToSheet()` — print summary for selected benchmark result
+- `runWriteSelectedBenchmarkResultToSheet()` — write selected benchmark result allocation to rows 35–38
+- `debugGetPhase12BenchmarkImportSelection()` — inspect current selected-run Script Properties
+- `setPhase12BenchmarkImportSelectedRunFolder(runFolderName)` — set selected benchmark run folder name
+- `setPhase12BenchmarkImportSelectedArtifactFileName(artifactFileName)` — set selected artifact file name
+- `clearPhase12BenchmarkImportSelectedRunFolder()` — clear selected run folder property
+- `setPhase12BenchmarkImportLatestSelection()` — reset to latest-import mode
+
 ## Current scaling reality
 
 The current random-trial approach continues to improve best scores with larger trial counts.
@@ -351,9 +447,23 @@ That is operationally useful, but Apps Script runtime becomes the bottleneck onc
 
 Current position:
 - Apps Script is good enough for practical in-sheet runs
-- the external compute path is now operational for offloading heavy trial batches
+- the external compute path is operational for offloading heavy trial batches
+- the Phase 12 launcher path is operational for much larger chunked trial runs
 - deeper brute-force search is better suited to external compute
 - the current codebase has already been prepared for external execution through explicit snapshot and result contracts
+
+## Large benchmark operational flow
+
+Current intended large-run workflow:
+1. in Apps Script, export live-sheet snapshot to Drive
+2. locally, run the Phase 12 launcher against the Cloud Run worker
+3. let the launcher checkpoint/resume as needed
+4. upload final run artifacts to Drive
+5. in Apps Script, inspect latest or selected benchmark result
+6. print benchmark summary to `Phase12_Benchmark_Import`
+7. write imported winning allocation back to `Sheet1` rows 35–38 when desired
+
+This preserves Google Sheets + Apps Script as the live operational front end while allowing much larger search volumes outside Apps Script runtime limits.
 
 ## Planned compute-separation direction
 
@@ -364,18 +474,19 @@ Current direction:
 - Apps Script remains the sheet-side controller/orchestrator
 - Apps Script continues to read the sheet, parse input, resolve scorer config, build snapshots, validate results, and write output
 - heavy random-trial computation can run locally or externally depending on invocation mode
+- large chunked benchmarking can run through the Phase 12 launcher path
 - the compute engine remains reusable pure JavaScript with minimal or no `SpreadsheetApp` dependency in the hot path
 - future cloud execution can continue to build on the current Cloud Run-based external worker path
 
-This is now a partially completed migration, not just a future concept.
+This is now a working incremental migration, not just a future concept.
 
 ## Repository and deployment notes
 
-- this repository tracks the local source of the Apps Script project and related worker files
-- `.clasp.json` is intentionally not committed
-- `.claspignore` is used to keep worker files out of the Apps Script push path
+- this repository tracks the local source of the Apps Script project and related worker/local-tooling files
+- `.claspignore` must exclude non-Apps-Script folders from Apps Script push
 - the live spreadsheet and Apps Script deployment are managed separately
 - the external worker is deployed separately from Apps Script
+- local launcher OAuth tokens and local environment files are not part of Apps Script
 - no open-source license is granted at this time
 - this project should be reviewed and validated before real operational use
 
@@ -386,4 +497,5 @@ Planned next improvements include:
 - further scorer tuning based on operational feedback
 - practical optimization of external compute trial volumes
 - optional operational cleanup around non-blocking routes such as `/healthz`
+- fuller validation of selected-run import once more than one benchmark run folder exists
 - keeping migration steps incremental and compatible with the current GitHub + clasp workflow
