@@ -62,7 +62,7 @@ function buildManifestBase(options) {
   const planFingerprint = options.planFingerprint || null;
 
   return {
-    launcherPhase: '12E',
+    launcherPhase: '12F',
     createdAtIso: new Date().toISOString(),
     planFingerprint,
     config: {
@@ -77,7 +77,11 @@ function buildManifestBase(options) {
       failFast: config.failFast,
       saveChunkResponses: config.saveChunkResponses,
       resume: !!config.resume,
-      runDir: config.runDir || null
+      runDir: config.runDir || null,
+      uploadToDrive: !!config.uploadToDrive,
+      driveRootFolderId: config.driveRootFolderId || null,
+      driveBenchmarkRunsFolderId: config.driveBenchmarkRunsFolderId || null,
+      driveBenchmarkRunsFolderName: config.driveBenchmarkRunsFolderName || null
     },
     snapshot: {
       contractVersion: snapshotInfo.snapshot.contractVersion,
@@ -139,6 +143,73 @@ function summarizeWinnerRecord(record) {
   };
 }
 
+function buildDriveUploadArtifactSet(artifactWriteResult) {
+  if (!artifactWriteResult || typeof artifactWriteResult !== 'object') {
+    throw new Error('artifactWriteResult is required to build Drive upload artifact set.');
+  }
+
+  const runDir = artifactWriteResult.runDir;
+  const runFolderName = artifactWriteResult.runFolderName;
+
+  if (typeof runDir !== 'string' || !runDir.trim()) {
+    throw new Error('artifactWriteResult.runDir is required.');
+  }
+
+  if (typeof runFolderName !== 'string' || !runFolderName.trim()) {
+    throw new Error('artifactWriteResult.runFolderName is required.');
+  }
+
+  const files = [];
+
+  function pushFile(localPath, relativePath, mimeType) {
+    if (!localPath) {
+      return;
+    }
+
+    const absolutePath = path.resolve(localPath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new Error(`Expected artifact file not found: ${absolutePath}`);
+    }
+
+    files.push({
+      localPath: absolutePath,
+      relativePath,
+      mimeType: mimeType || 'application/json'
+    });
+  }
+
+  pushFile(artifactWriteResult.manifestPath, 'run_manifest.json');
+  pushFile(artifactWriteResult.globalBestPath, 'global_best.transport_trial_result_v1.json');
+  pushFile(artifactWriteResult.topChunkSummaryPath, 'top_chunks_summary.json');
+
+  if (artifactWriteResult.topChunksDir && fs.existsSync(artifactWriteResult.topChunksDir)) {
+    const topChunkFileNames = fs.readdirSync(artifactWriteResult.topChunksDir)
+      .filter((entry) => entry.endsWith('.json'))
+      .sort();
+
+    topChunkFileNames.forEach((fileName) => {
+      pushFile(
+        path.join(artifactWriteResult.topChunksDir, fileName),
+        path.posix.join('top_chunks', fileName)
+      );
+    });
+  }
+
+  return {
+    runDir: path.resolve(runDir),
+    runFolderName,
+    files
+  };
+}
+
+function writeDriveUploadSummary(runDir, uploadSummary) {
+  const resolvedRunDir = path.resolve(runDir);
+  ensureDir(resolvedRunDir);
+  const summaryPath = path.join(resolvedRunDir, 'drive_upload_summary.json');
+  writeJsonFile(summaryPath, uploadSummary || {});
+  return summaryPath;
+}
+
 function createLocalArtifactWriter(options) {
   const source = options || {};
   const config = source.config || {};
@@ -167,6 +238,7 @@ function createLocalArtifactWriter(options) {
     manifestPath: path.join(runDir, 'run_manifest.json'),
     globalBestPath: path.join(runDir, 'global_best.transport_trial_result_v1.json'),
     topChunkSummaryPath: path.join(runDir, 'top_chunks_summary.json'),
+    driveUploadSummaryPath: path.join(runDir, 'drive_upload_summary.json'),
     runStartedPath: path.join(runDir, 'run_started.json')
   };
 
@@ -267,7 +339,7 @@ function createLocalArtifactWriter(options) {
 
     const checkpointDoc = {
       checkpointVersion: safeState.checkpointVersion || 'phase12_local_checkpoint_v1',
-      launcherPhase: safeState.launcherPhase || '12E',
+      launcherPhase: safeState.launcherPhase || '12F',
       status: safeState.status || 'RUNNING',
       planFingerprint: safeState.planFingerprint || planFingerprint,
       runDir,
@@ -375,14 +447,18 @@ function createLocalArtifactWriter(options) {
     recordChunkSuccess,
     recordChunkFailure,
     writeCheckpointState,
-    writeFinalArtifacts
+    writeFinalArtifacts,
+    buildDriveUploadArtifactSet,
+    writeDriveUploadSummary
   };
 }
 
 module.exports = {
+  buildDriveUploadArtifactSet,
   createLocalArtifactWriter,
   sanitizeFileNamePart,
   summarizeChunkFailure,
   summarizeChunkSuccess,
-  summarizeWinnerRecord
+  summarizeWinnerRecord,
+  writeDriveUploadSummary
 };
