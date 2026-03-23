@@ -295,6 +295,10 @@ Current `BENCHMARK_SUMMARY` behavior:
 - current strict comparison group is defined by:
   - `SnapshotFileSha256`
   - `ScorerFingerprint`
+- built-in Apps Script benchmark helper rows that do not persist `SnapshotFileSha256` are still aggregated by a documented fallback group:
+  - `CampaignBatchLabel`
+  - `InvocationMode`
+  - `ScorerFingerprint`
 - rows missing either field are isolated into singleton summary rows with explicit incomplete-metadata status, rather than being misleadingly aggregated with other runs
 - summary rows surface comparison metadata so users can see whether rows are actually comparable before interpreting score distributions
 

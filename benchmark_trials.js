@@ -469,16 +469,38 @@ function getBenchmarkSummaryStatusSortRank_(status) {
   if (normalized === "STRICT") {
     return 0;
   }
-  if (normalized === "INCOMPLETE_METADATA_SINGLETON") {
+  if (normalized === "FALLBACK_BATCH_SCORER") {
     return 1;
   }
-  return 2;
+  if (normalized === "INCOMPLETE_METADATA_SINGLETON") {
+    return 2;
+  }
+  return 3;
+}
+
+function isBenchmarkHelperSummaryFallbackRow_(rowObject) {
+  const row = rowObject || {};
+  const batchLabel = normalizeBenchmarkSummaryString_(row.CampaignBatchLabel);
+  const campaignFolderName = normalizeBenchmarkSummaryString_(row.CampaignFolderName);
+  const runFolderName = normalizeBenchmarkSummaryString_(row.RunFolderName);
+  const artifactFileName = normalizeBenchmarkSummaryString_(row.ArtifactFileName);
+  const runId = normalizeBenchmarkSummaryString_(row.RunId);
+
+  return !!(
+    batchLabel
+    && !campaignFolderName
+    && !runFolderName
+    && !artifactFileName
+    && !runId
+  );
 }
 
 function buildBenchmarkSummaryRowIdentity_(rowObject, rowIndex) {
   const row = rowObject || {};
+  const batchLabel = normalizeBenchmarkSummaryString_(row.CampaignBatchLabel);
   const snapshotFileSha256 = normalizeBenchmarkSummaryString_(row.SnapshotFileSha256);
   const scorerFingerprint = normalizeBenchmarkSummaryString_(row.ScorerFingerprint);
+  const invocationMode = normalizeBenchmarkSummaryString_(row.InvocationMode);
   const runId = normalizeBenchmarkSummaryString_(row.RunId);
   const rowNumber = row && row._rowNumber ? Number(row._rowNumber) : Number(rowIndex) + 2;
   const missingFields = [];
@@ -491,17 +513,36 @@ function buildBenchmarkSummaryRowIdentity_(rowObject, rowIndex) {
     missingFields.push("ScorerFingerprint");
   }
 
-  const isComparable = missingFields.length === 0;
-  const baseKey = isComparable
-    ? "snapshot:" + snapshotFileSha256 + "|scorer:" + scorerFingerprint
-    : "singleton:" + (runId || "row-" + rowNumber);
+  if (missingFields.length === 0) {
+    return {
+      comparisonGroupKey: "cg:v1|snapshot:" + snapshotFileSha256 + "|scorer:" + scorerFingerprint,
+      comparisonStatus: "STRICT",
+      comparisonStatusReason: "Comparable only within identical SnapshotFileSha256 + ScorerFingerprint.",
+      snapshotFileSha256: snapshotFileSha256,
+      scorerFingerprint: scorerFingerprint,
+      rowNumber: rowNumber
+    };
+  }
+
+  if (
+    !snapshotFileSha256
+    && scorerFingerprint
+    && isBenchmarkHelperSummaryFallbackRow_(row)
+  ) {
+    return {
+      comparisonGroupKey: "cg:v1|helperBatch:" + batchLabel + "|mode:" + invocationMode + "|scorer:" + scorerFingerprint,
+      comparisonStatus: "FALLBACK_BATCH_SCORER",
+      comparisonStatusReason: "SnapshotFileSha256 is missing, so built-in benchmark helper rows are grouped by CampaignBatchLabel + InvocationMode + ScorerFingerprint.",
+      snapshotFileSha256: snapshotFileSha256,
+      scorerFingerprint: scorerFingerprint,
+      rowNumber: rowNumber
+    };
+  }
 
   return {
-    comparisonGroupKey: "cg:v1|" + baseKey,
-    comparisonStatus: isComparable ? "STRICT" : "INCOMPLETE_METADATA_SINGLETON",
-    comparisonStatusReason: isComparable
-      ? "Comparable only within identical SnapshotFileSha256 + ScorerFingerprint."
-      : "Missing required comparison metadata: " + missingFields.join(", ") + ". Row isolated to avoid misleading aggregation.",
+    comparisonGroupKey: "cg:v1|singleton:" + (runId || "row-" + rowNumber),
+    comparisonStatus: "INCOMPLETE_METADATA_SINGLETON",
+    comparisonStatusReason: "Missing required comparison metadata: " + missingFields.join(", ") + ". Row isolated to avoid misleading aggregation.",
     snapshotFileSha256: snapshotFileSha256,
     scorerFingerprint: scorerFingerprint,
     rowNumber: rowNumber
