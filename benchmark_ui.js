@@ -333,8 +333,13 @@ function initializeBenchmarkUiControls_() {
   const seedOverrideRange = resolveBenchmarkUiControlRange_('seedOverride');
   seedOverrideRange.setNumberFormat('@');
 
+  const bestRunIdRange = resolveBenchmarkUiControlRange_('bestRunId');
+  bestRunIdRange.setNumberFormat('@');
+  bestRunIdRange.setWrap(true);
+
   const specificRunIdRange = resolveBenchmarkUiControlRange_('specificRunId');
   specificRunIdRange.setNumberFormat('@');
+  specificRunIdRange.setWrap(true);
   if (!normalizeBenchmarkUiString_(specificRunIdRange.getValue())) {
     specificRunIdRange.setValue(getBenchmarkUiConfig_().specificRunIdPlaceholder);
   }
@@ -349,6 +354,7 @@ function initializeBenchmarkUiControls_() {
     sheetName: getBenchmarkUiSheet_().getName(),
     targetMaxTrialCountCell: targetRange.getA1Notation(),
     seedOverrideCell: seedOverrideRange.getA1Notation(),
+    bestRunIdCell: bestRunIdRange.getA1Notation(),
     specificRunIdCell: specificRunIdRange.getA1Notation(),
     campaignSeedCell: campaignSeedRange.getA1Notation(),
     allowedTargetMaxTrialCounts: allowed,

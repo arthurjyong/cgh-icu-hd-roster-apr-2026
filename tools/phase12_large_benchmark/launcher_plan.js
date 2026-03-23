@@ -69,7 +69,41 @@ function zeroPadInteger(value, width) {
   return String(value).padStart(width, '0');
 }
 
-function deriveCampaignRunId(trialCount, repeatIndex) {
+function sanitizeRunIdComponent(value, fallbackValue) {
+  const normalized = String(value == null ? '' : value)
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return normalized || fallbackValue;
+}
+
+function deriveCampaignIdentityForRunId(config, snapshotInfo) {
+  const sourceConfig = config || {};
+  const explicitCampaignDir = typeof sourceConfig.campaignDir === 'string' && sourceConfig.campaignDir.trim()
+    ? path.basename(sourceConfig.campaignDir.trim())
+    : '';
+
+  const campaignIdentitySource = explicitCampaignDir || [
+    sourceConfig.campaignBatchLabel || 'campaign',
+    snapshotInfo && snapshotInfo.file && snapshotInfo.file.fileSha256
+      ? snapshotInfo.file.fileSha256.slice(0, 8)
+      : 'snapshot',
+    sourceConfig.baseSeed || 'seed',
+    Array.isArray(sourceConfig.campaignTrialCounts) ? sourceConfig.campaignTrialCounts.join('-') : 'counts',
+    sourceConfig.campaignRepeats || 'repeats'
+  ].join('__');
+
+  const safeIdentity = sanitizeRunIdComponent(campaignIdentitySource, 'campaign');
+  const readablePrefix = safeIdentity.slice(0, 24).replace(/^_+|_+$/g, '') || 'campaign';
+  const identityHash = computeSha256Hex(safeIdentity).slice(0, 8);
+
+  return `${readablePrefix}_${identityHash}`;
+}
+
+function deriveCampaignRunId(campaignIdentity, trialCount, repeatIndex) {
+  const normalizedCampaignIdentity = sanitizeRunIdComponent(campaignIdentity, 'campaign');
   const normalizedTrialCount = Number(trialCount);
   const normalizedRepeatIndex = Number(repeatIndex);
 
@@ -81,7 +115,7 @@ function deriveCampaignRunId(trialCount, repeatIndex) {
     throw new Error(`repeatIndex must be a positive integer to derive a campaign run id. Received: ${repeatIndex}`);
   }
 
-  return `tc_${zeroPadInteger(normalizedTrialCount, 7)}_r${zeroPadInteger(normalizedRepeatIndex, 2)}`;
+  return `cmp_${normalizedCampaignIdentity}_tc_${zeroPadInteger(normalizedTrialCount, 7)}_r${zeroPadInteger(normalizedRepeatIndex, 2)}`;
 }
 
 function deriveCampaignRunSeed(baseSeed, trialCount, repeatIndex) {
@@ -176,10 +210,13 @@ function buildCampaignPlanFingerprint(options) {
     throw new Error('config.campaignRepeats must be a positive integer to build a campaign plan fingerprint.');
   }
 
+  const campaignIdentityForRunId = deriveCampaignIdentityForRunId(config, snapshotInfo);
+
   return computeSha256Hex(JSON.stringify({
     fingerprintVersion: CAMPAIGN_PLAN_FINGERPRINT_VERSION,
     contractVersion: snapshotInfo.snapshot ? snapshotInfo.snapshot.contractVersion : null,
     snapshotFileSha256: snapshotInfo.file.fileSha256,
+    campaignIdentityForRunId,
     campaignBatchLabel: config.campaignBatchLabel || null,
     campaignTrialCounts: config.campaignTrialCounts,
     campaignRepeats: config.campaignRepeats,
@@ -215,6 +252,7 @@ function buildCampaignPlan(config, snapshotInfo) {
   }
 
   const runs = [];
+  const campaignIdentityForRunId = deriveCampaignIdentityForRunId(config, snapshotInfo);
   let globalRunIndex = 0;
 
   for (let trialIndex = 0; trialIndex < config.campaignTrialCounts.length; trialIndex++) {
@@ -229,7 +267,7 @@ function buildCampaignPlan(config, snapshotInfo) {
     for (let repeatIndex = 1; repeatIndex <= config.campaignRepeats; repeatIndex++) {
       globalRunIndex += 1;
 
-      const runId = deriveCampaignRunId(trialCount, repeatIndex);
+      const runId = deriveCampaignRunId(campaignIdentityForRunId, trialCount, repeatIndex);
       const baseSeedForRun = deriveCampaignRunSeed(config.baseSeed, trialCount, repeatIndex);
 
       runs.push({
@@ -251,6 +289,7 @@ function buildCampaignPlan(config, snapshotInfo) {
 
   return {
     campaignBatchLabel: config.campaignBatchLabel || null,
+    campaignIdentityForRunId,
     campaignRepeats: config.campaignRepeats,
     campaignTrialCounts: config.campaignTrialCounts.slice(),
     plannedRunCount: runs.length,
@@ -304,6 +343,7 @@ function buildCampaignPlanSummary(config, snapshotInfo, campaignPlan, options) {
     config: {
       snapshotPath: snapshotInfo.file.absolutePath,
       campaignBatchLabel: config.campaignBatchLabel || null,
+      campaignIdentityForRunId: campaignPlan.campaignIdentityForRunId || null,
       campaignRepeats: config.campaignRepeats,
       campaignTrialCounts: Array.isArray(config.campaignTrialCounts)
         ? config.campaignTrialCounts.slice()
@@ -369,6 +409,7 @@ module.exports = {
   buildPlanSummary,
   buildSnapshotSummary,
   computeSha256Hex,
+  deriveCampaignIdentityForRunId,
   deriveCampaignRunId,
   deriveCampaignRunSeed,
   deriveChunkSeed,
