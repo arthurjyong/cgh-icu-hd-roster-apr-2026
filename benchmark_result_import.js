@@ -1069,6 +1069,19 @@ function safeFiniteNumberOrBlank_(value) {
   return isFiniteNumberValue_(value) ? value : "";
 }
 
+function safeCampaignScoringComponentOrBlank_(scoring, componentKey) {
+  const componentScores = scoring && scoring.componentScores && typeof scoring.componentScores === "object"
+    && !Array.isArray(scoring.componentScores)
+    ? scoring.componentScores
+    : null;
+
+  if (!componentScores) {
+    return "";
+  }
+
+  return safeFiniteNumberOrBlank_(componentScores[componentKey]);
+}
+
 function buildBenchmarkTrialsRowsFromCampaignReport_(loaded, importTimestamp) {
   const report = loaded && loaded.report ? loaded.report : {};
   const campaign = report && report.campaign ? report.campaign : {};
@@ -1104,6 +1117,15 @@ function buildBenchmarkTrialsRowsFromCampaignReport_(loaded, importTimestamp) {
       TotalScore: safeFiniteNumberOrBlank_(
         isFiniteNumberValue_(scoring.totalScore) ? scoring.totalScore : run.bestScore
       ),
+      PointBalanceGlobal: safeCampaignScoringComponentOrBlank_(scoring, "pointBalanceGlobal"),
+      PointBalanceWithinSection: safeCampaignScoringComponentOrBlank_(scoring, "pointBalanceWithinSection"),
+      SpacingPenalty: safeCampaignScoringComponentOrBlank_(scoring, "spacingPenalty"),
+      CrReward: safeCampaignScoringComponentOrBlank_(scoring, "crReward"),
+      DualEligibleIcuBonus: safeCampaignScoringComponentOrBlank_(scoring, "dualEligibleIcuBonus"),
+      StandbyAdjacencyPenalty: safeCampaignScoringComponentOrBlank_(scoring, "standbyAdjacencyPenalty"),
+      StandbyCountFairnessPenalty: safeCampaignScoringComponentOrBlank_(scoring, "standbyCountFairnessPenalty"),
+      PreLeavePenalty: safeCampaignScoringComponentOrBlank_(scoring, "preLeavePenalty"),
+      UnfilledPenalty: safeCampaignScoringComponentOrBlank_(scoring, "unfilledPenalty"),
       SummaryMessage: safeStringOrBlank_(run.summaryMessage),
       FailureMessage: safeStringOrBlank_(run.failureMessage)
     };
