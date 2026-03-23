@@ -25,6 +25,10 @@ function getBenchmarkTrialsHeader_() {
     "Seed",
     "RunFolderName",
     "ArtifactFileName",
+    "ScorerFingerprint",
+    "ScorerFingerprintShort",
+    "ScorerFingerprintVersion",
+    "ScorerSource",
     "MeanPoints",
     "StandardDeviation",
     "Range",
@@ -66,6 +70,43 @@ function getLegacyBenchmarkTrialsHeader_() {
     "StandardDeviation",
     "Range",
     "TotalScore",
+    "SummaryMessage",
+    "FailureMessage"
+  ];
+}
+
+function getPhase2BenchmarkTrialsHeader_() {
+  return [
+    "ImportTimestamp",
+    "CampaignBatchLabel",
+    "CampaignFolderName",
+    "SnapshotLabel",
+    "SnapshotFileSha256",
+    "TrialCount",
+    "RepeatIndex",
+    "RunId",
+    "Ok",
+    "BestScore",
+    "BestTrialIndex",
+    "RuntimeMs",
+    "RuntimeSec",
+    "InvocationMode",
+    "Seed",
+    "RunFolderName",
+    "ArtifactFileName",
+    "MeanPoints",
+    "StandardDeviation",
+    "Range",
+    "TotalScore",
+    "PointBalanceGlobal",
+    "PointBalanceWithinSection",
+    "SpacingPenalty",
+    "CrReward",
+    "DualEligibleIcuBonus",
+    "StandbyAdjacencyPenalty",
+    "StandbyCountFairnessPenalty",
+    "PreLeavePenalty",
+    "UnfilledPenalty",
     "SummaryMessage",
     "FailureMessage"
   ];
@@ -199,6 +240,7 @@ function migrateLegacyBenchmarkTrialsSheetForAppend_(sheet) {
 
   const expectedHeader = getBenchmarkTrialsHeader_();
   const legacyHeader = getLegacyBenchmarkTrialsHeader_();
+  const phase2Header = getPhase2BenchmarkTrialsHeader_();
   const lastRow = sheet.getLastRow();
   const actualHeader = sheet.getRange(1, 1, 1, expectedHeader.length).getValues()[0];
 
@@ -206,7 +248,15 @@ function migrateLegacyBenchmarkTrialsSheetForAppend_(sheet) {
     return;
   }
 
-  if (!headerRowsMatchExactly_(actualHeader, legacyHeader)) {
+  let sourceHeader = null;
+
+  if (headerRowsMatchExactly_(actualHeader, phase2Header)) {
+    sourceHeader = phase2Header;
+  } else if (headerRowsMatchExactly_(actualHeader, legacyHeader)) {
+    sourceHeader = legacyHeader;
+  }
+
+  if (!sourceHeader) {
     throw new Error(
       "BENCHMARK_TRIALS header does not match the current schema or the supported legacy schema. " +
       "Run resetBenchmarkSheets() or a REPLACE campaign import before APPEND."
@@ -215,12 +265,12 @@ function migrateLegacyBenchmarkTrialsSheetForAppend_(sheet) {
 
   const migratedRows = [];
   const dataRowCount = Math.max(0, lastRow - 1);
-  const legacyHeaderMap = buildHeaderIndexMapFromRow_(legacyHeader);
-  const addedColumnCount = expectedHeader.length - legacyHeader.length;
+  const legacyHeaderMap = buildHeaderIndexMapFromRow_(sourceHeader);
+  const addedColumnCount = expectedHeader.length - sourceHeader.length;
 
   if (dataRowCount > 0) {
     const addedColumnValues = addedColumnCount > 0
-      ? sheet.getRange(2, legacyHeader.length + 1, dataRowCount, addedColumnCount).getValues()
+      ? sheet.getRange(2, sourceHeader.length + 1, dataRowCount, addedColumnCount).getValues()
       : [];
 
     for (let rowIndex = 0; rowIndex < addedColumnValues.length; rowIndex++) {
@@ -235,7 +285,7 @@ function migrateLegacyBenchmarkTrialsSheetForAppend_(sheet) {
       }
     }
 
-    const legacyRows = sheet.getRange(2, 1, dataRowCount, legacyHeader.length).getValues();
+    const legacyRows = sheet.getRange(2, 1, dataRowCount, sourceHeader.length).getValues();
     for (let i = 0; i < legacyRows.length; i++) {
       const legacyRow = legacyRows[i];
       migratedRows.push(expectedHeader.map(function(columnName) {
@@ -324,6 +374,10 @@ function buildBenchmarkRow_(batchLabel, trialCount, repeatIndex, runtimeMs, tria
     Seed: "",
     RunFolderName: "",
     ArtifactFileName: "",
+    ScorerFingerprint: safeScorerFingerprintFieldFromObjects_("scorerFingerprint", bestScoring, null, null),
+    ScorerFingerprintShort: safeScorerFingerprintFieldFromObjects_("scorerFingerprintShort", bestScoring, null, null),
+    ScorerFingerprintVersion: safeScorerFingerprintFieldFromObjects_("scorerFingerprintVersion", bestScoring, null, null),
+    ScorerSource: safeScorerConfigSourceFromBestScoring_(bestScoring),
     MeanPoints: bestScoring && typeof bestScoring.meanPoints === "number" ? bestScoring.meanPoints : "",
     StandardDeviation: bestScoring && typeof bestScoring.standardDeviation === "number" ? bestScoring.standardDeviation : "",
     Range: bestScoring && typeof bestScoring.range === "number" ? bestScoring.range : "",
@@ -705,8 +759,25 @@ function safeScorerConfigSourceFromBestScoring_(bestScoring) {
     return bestScoring.scorerConfig.source;
   }
 
+  if (bestScoring.scorerSource) {
+    return bestScoring.scorerSource;
+  }
+
   if (bestScoring.source) {
     return bestScoring.source;
+  }
+
+  return "";
+}
+
+function safeScorerFingerprintFieldFromObjects_(fieldName, firstObject, secondObject, thirdObject) {
+  const objects = [firstObject, secondObject, thirdObject];
+
+  for (let i = 0; i < objects.length; i++) {
+    const candidate = objects[i];
+    if (candidate && typeof candidate === "object" && candidate[fieldName]) {
+      return String(candidate[fieldName]);
+    }
   }
 
   return "";
@@ -760,6 +831,11 @@ function buildBenchmarkRowFromTransportTrialResult_(batchLabel, trialCount, repe
     Seed: normalizedSeed,
     RunFolderName: "",
     ArtifactFileName: "",
+    ScorerFingerprint: safeScorerFingerprintFieldFromObjects_("scorerFingerprint", bestScoring, scoringSummary, transportResult),
+    ScorerFingerprintShort: safeScorerFingerprintFieldFromObjects_("scorerFingerprintShort", bestScoring, scoringSummary, transportResult),
+    ScorerFingerprintVersion: safeScorerFingerprintFieldFromObjects_("scorerFingerprintVersion", bestScoring, scoringSummary, transportResult),
+    ScorerSource: safeScorerConfigSourceFromBestScoring_(bestScoring)
+      || safeScorerFingerprintFieldFromObjects_("scorerSource", scoringSummary, transportResult, null),
     MeanPoints: safeNumberFieldFromObjects_("meanPoints", bestScoring, scoringSummary),
     StandardDeviation: safeNumberFieldFromObjects_("standardDeviation", bestScoring, scoringSummary),
     Range: safeNumberFieldFromObjects_("range", bestScoring, scoringSummary),

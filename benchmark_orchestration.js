@@ -287,6 +287,10 @@ function extractBenchmarkProgressPayload_(statusResponse) {
     plannedRunCount: response.plannedRunCount,
     currentBestRunId: response.currentBestRunId || '',
     currentBestScore: response.currentBestScore,
+    currentBestScorerFingerprint: response.currentBestScorerFingerprint || '',
+    currentBestScorerFingerprintShort: response.currentBestScorerFingerprintShort || '',
+    currentBestScorerFingerprintVersion: response.currentBestScorerFingerprintVersion || '',
+    currentBestScorerSource: response.currentBestScorerSource || '',
     campaignSeed: response.baseSeed != null ? String(response.baseSeed) : ''
   };
 }

@@ -22,6 +22,133 @@ function cloneSimpleObject_(source) {
   return target;
 }
 
+function getScorerFingerprintVersion_() {
+  return "v1";
+}
+
+function getScorerIdentityPayloadVersion_() {
+  return "scorer_identity_payload_v1";
+}
+
+function stableSortObjectKeysDeep_(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableSortObjectKeysDeep_);
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const keys = Object.keys(value).sort();
+  const result = {};
+
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    result[key] = stableSortObjectKeysDeep_(value[key]);
+  }
+
+  return result;
+}
+
+function stableStringifyJson_(value) {
+  return JSON.stringify(stableSortObjectKeysDeep_(value));
+}
+
+function computeSha256HexForScorerFingerprint_(text) {
+  const normalizedText = String(text === null || text === undefined ? "" : text);
+
+  if (typeof __PURE_COMPUTE_SHA256_HEX__ === "function") {
+    return __PURE_COMPUTE_SHA256_HEX__(normalizedText);
+  }
+
+  if (typeof Utilities !== "undefined" && Utilities && typeof Utilities.computeDigest === "function") {
+    const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, normalizedText);
+    let hex = "";
+
+    for (let i = 0; i < digest.length; i++) {
+      let value = digest[i];
+      if (value < 0) {
+        value += 256;
+      }
+      const piece = value.toString(16);
+      hex += piece.length === 1 ? "0" + piece : piece;
+    }
+
+    return hex;
+  }
+
+  throw new Error("SHA-256 helper is not available for scorer fingerprint generation.");
+}
+
+function buildScorerSourceLabel_(scorerConfigResult) {
+  if (!scorerConfigResult || typeof scorerConfigResult !== "object") {
+    return "UNKNOWN";
+  }
+
+  const source = scorerConfigResult.source ? String(scorerConfigResult.source) : "UNKNOWN";
+  const sheetName = scorerConfigResult.sheetName ? String(scorerConfigResult.sheetName) : "";
+
+  return sheetName ? source + ":" + sheetName : source;
+}
+
+function buildScorerIdentityPayload_(scorerConfigResult) {
+  const resolved = scorerConfigResult && typeof scorerConfigResult === "object"
+    ? scorerConfigResult
+    : {};
+  const weights = resolved.weights && typeof resolved.weights === "object"
+    ? cloneSimpleObject_(resolved.weights)
+    : {};
+  const definitions = getScorerConfigDefinitions_();
+  const definitionKeys = [];
+
+  for (let i = 0; i < definitions.length; i++) {
+    definitionKeys.push(definitions[i].key);
+  }
+
+  return {
+    payloadVersion: getScorerIdentityPayloadVersion_(),
+    scorerFingerprintVersion: getScorerFingerprintVersion_(),
+    scorerLogicVersion: typeof getScorerLogicVersion_ === "function"
+      ? getScorerLogicVersion_()
+      : "unknown",
+    scorerContractVersion: typeof getScoringContractVersion_ === "function"
+      ? getScoringContractVersion_()
+      : null,
+    scorerSource: buildScorerSourceLabel_(resolved),
+    scorerConfigSource: resolved.source || null,
+    scorerConfigSheetName: resolved.sheetName || null,
+    scorerConfigDefinitionKeys: definitionKeys,
+    scorerComponentKeys: typeof getScorerComponentKeys_ === "function"
+      ? getScorerComponentKeys_()
+      : [],
+    defaultWeights: typeof getDefaultScorerWeights_ === "function"
+      ? cloneSimpleObject_(getDefaultScorerWeights_())
+      : {},
+    resolvedWeights: weights
+  };
+}
+
+function attachScorerFingerprintMetadata_(scorerConfigResult) {
+  const source = scorerConfigResult && typeof scorerConfigResult === "object"
+    ? cloneSimpleObject_(scorerConfigResult)
+    : {};
+  const payload = buildScorerIdentityPayload_(source);
+  const payloadJson = stableStringifyJson_(payload);
+  const fullHash = computeSha256HexForScorerFingerprint_(payloadJson);
+  const fingerprintVersion = getScorerFingerprintVersion_();
+  const scorerSource = buildScorerSourceLabel_(source);
+
+  source.scorerIdentityPayload = payload;
+  source.scorerIdentityPayloadJson = payloadJson;
+  source.scorerFingerprintVersion = fingerprintVersion;
+  source.scorerFingerprintHash = fullHash;
+  source.scorerFingerprint = "scorerfp:" + fingerprintVersion + ":" + fullHash;
+  source.scorerFingerprintShort = "scorerfp:" + fingerprintVersion + ":" + fullHash.slice(0, 16);
+  source.scorerSource = scorerSource;
+
+  return source;
+}
+
 function getScorerConfigDefinitions_() {
   const defaults = getDefaultScorerWeights_();
 
@@ -308,13 +435,13 @@ function buildResolvedScorerWeights_() {
   const readResult = readScorerConfigSheet_();
 
   if (!readResult.exists) {
-    return {
+    return attachScorerFingerprintMetadata_({
       ok: true,
       source: "CODE_DEFAULTS",
       sheetName: sheetName,
       weights: cloneSimpleObject_(defaults),
       issues: []
-    };
+    });
   }
 
   const issues = readResult.issues ? readResult.issues.slice() : [];
@@ -363,14 +490,14 @@ function buildResolvedScorerWeights_() {
   }
 
   if (issues.length > 0) {
-    return {
+    return attachScorerFingerprintMetadata_({
       ok: false,
       source: "SCORER_CONFIG",
       sheetName: sheetName,
       weights: null,
       issues: issues,
       message: "SCORER_CONFIG exists but is invalid. Fix the sheet or remove the tab to fall back to code defaults."
-    };
+    });
   }
 
   const resolvedWeights = cloneSimpleObject_(defaults);
@@ -381,13 +508,13 @@ function buildResolvedScorerWeights_() {
     resolvedWeights[key] = parsedOverrides[key];
   }
 
-  return {
+  return attachScorerFingerprintMetadata_({
     ok: true,
     source: "SCORER_CONFIG",
     sheetName: sheetName,
     weights: resolvedWeights,
     issues: []
-  };
+  });
 }
 
 function extractExistingScorerConfigValueMap_(sheet) {

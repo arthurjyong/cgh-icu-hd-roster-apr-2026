@@ -102,7 +102,11 @@ function normalizeBestRunRecord(input) {
     bestTrialIndex: normalizeFiniteNumberOrNull(input.bestTrialIndex),
     runFolderName: normalizeOptionalString(input.runFolderName),
     artifactFileName: normalizeOptionalString(input.artifactFileName),
-    invocationMode: normalizeOptionalString(input.invocationMode)
+    invocationMode: normalizeOptionalString(input.invocationMode),
+    scorerFingerprint: normalizeOptionalString(input.scorerFingerprint),
+    scorerFingerprintShort: normalizeOptionalString(input.scorerFingerprintShort),
+    scorerFingerprintVersion: normalizeOptionalString(input.scorerFingerprintVersion),
+    scorerSource: normalizeOptionalString(input.scorerSource)
   };
 }
 
@@ -223,6 +227,10 @@ function normalizeRunRecord(input) {
     runFolderName: normalizeOptionalString(input.runFolderName),
     artifactFileName: normalizeOptionalString(input.artifactFileName),
     invocationMode: normalizeOptionalString(input.invocationMode),
+    scorerFingerprint: normalizeOptionalString(input.scorerFingerprint),
+    scorerFingerprintShort: normalizeOptionalString(input.scorerFingerprintShort),
+    scorerFingerprintVersion: normalizeOptionalString(input.scorerFingerprintVersion),
+    scorerSource: normalizeOptionalString(input.scorerSource),
     ok: input.ok !== false,
     completedAt: toIsoString(input.completedAt)
   };
@@ -250,7 +258,11 @@ function applyRunCompletion(stateInput, runRecordInput) {
         bestTrialIndex: runRecord.bestTrialIndex,
         runFolderName: runRecord.runFolderName,
         artifactFileName: runRecord.artifactFileName,
-        invocationMode: runRecord.invocationMode
+        invocationMode: runRecord.invocationMode,
+        scorerFingerprint: runRecord.scorerFingerprint,
+        scorerFingerprintShort: runRecord.scorerFingerprintShort,
+        scorerFingerprintVersion: runRecord.scorerFingerprintVersion,
+        scorerSource: runRecord.scorerSource
       }
     );
   } else {
@@ -323,6 +335,10 @@ function buildCampaignStatusSummary(stateInput) {
     currentBestScore: state.currentBestRun ? state.currentBestRun.bestScore : null,
     currentBestTrialCount: state.currentBestRun ? state.currentBestRun.trialCount : null,
     currentBestRepeatIndex: state.currentBestRun ? state.currentBestRun.repeatIndex : null,
+    currentBestScorerFingerprint: state.currentBestRun ? state.currentBestRun.scorerFingerprint : null,
+    currentBestScorerFingerprintShort: state.currentBestRun ? state.currentBestRun.scorerFingerprintShort : null,
+    currentBestScorerFingerprintVersion: state.currentBestRun ? state.currentBestRun.scorerFingerprintVersion : null,
+    currentBestScorerSource: state.currentBestRun ? state.currentBestRun.scorerSource : null,
     startedAt: state.startedAt,
     lastUpdated: state.lastUpdated,
     completedAt: state.completedAt,

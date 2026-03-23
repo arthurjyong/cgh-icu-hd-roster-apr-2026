@@ -72,6 +72,10 @@ function rebuildWinnerRecord(summary, transportResult) {
       : null,
     range: typeof safeSummary.range === 'number' ? safeSummary.range : null,
     totalScore: typeof safeSummary.totalScore === 'number' ? safeSummary.totalScore : null,
+    scorerFingerprint: typeof safeSummary.scorerFingerprint === 'string' ? safeSummary.scorerFingerprint : null,
+    scorerFingerprintShort: typeof safeSummary.scorerFingerprintShort === 'string' ? safeSummary.scorerFingerprintShort : null,
+    scorerFingerprintVersion: typeof safeSummary.scorerFingerprintVersion === 'string' ? safeSummary.scorerFingerprintVersion : null,
+    scorerSource: typeof safeSummary.scorerSource === 'string' ? safeSummary.scorerSource : null,
     transportResult
   };
 }
