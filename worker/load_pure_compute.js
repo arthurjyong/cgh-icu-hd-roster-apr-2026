@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const crypto = require('crypto');
 
 let cachedRuntime = null;
 let cachedCacheKey = null;
@@ -78,7 +79,13 @@ function createVmContext() {
     setTimeout,
     clearTimeout,
     setInterval,
-    clearInterval
+    clearInterval,
+    __PURE_COMPUTE_SHA256_HEX__: function sha256Hex(value) {
+      return crypto
+        .createHash('sha256')
+        .update(String(value == null ? '' : value), 'utf8')
+        .digest('hex');
+    }
   };
 
   context.global = context;

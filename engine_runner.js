@@ -25,8 +25,14 @@ function buildScorerConfigResultLikeFromSnapshot_(snapshot) {
   return {
     ok: true,
     source: scorer.source || null,
+    scorerSource: scorer.scorerSource || scorer.source || null,
     sheetName: scorer.sheetName || null,
-    weights: scorer.weights || null
+    weights: scorer.weights || null,
+    scorerFingerprintVersion: scorer.scorerFingerprintVersion || null,
+    scorerFingerprint: scorer.scorerFingerprint || null,
+    scorerFingerprintShort: scorer.scorerFingerprintShort || null,
+    scorerFingerprintHash: scorer.scorerFingerprintHash || null,
+    scorerIdentityPayload: scorer.scorerIdentityPayload || null
   };
 }
 
@@ -117,7 +123,11 @@ function buildTransportTrialResult_(headlessResult, options) {
           minPoints: headlessResult.bestScoring.minPoints,
           maxPoints: headlessResult.bestScoring.maxPoints,
           range: headlessResult.bestScoring.range,
-          componentScores: buildComponentScoresFromScoring_(headlessResult.bestScoring)
+          componentScores: buildComponentScoresFromScoring_(headlessResult.bestScoring),
+          scorerFingerprintVersion: headlessResult.bestScoring.scorerFingerprintVersion || null,
+          scorerFingerprint: headlessResult.bestScoring.scorerFingerprint || null,
+          scorerFingerprintShort: headlessResult.bestScoring.scorerFingerprintShort || null,
+          scorerSource: headlessResult.bestScoring.scorerSource || null
         }
       : null
   };
@@ -127,6 +137,18 @@ function buildTransportTrialResult_(headlessResult, options) {
     contractVersion: transportContractVersion,
     sourceContractVersion: headlessResult.contractVersion || null,
     snapshotContractVersion: headlessResult.snapshotContractVersion || null,
+    scorerFingerprintVersion: headlessResult.bestScoring && headlessResult.bestScoring.scorerFingerprintVersion
+      ? headlessResult.bestScoring.scorerFingerprintVersion
+      : null,
+    scorerFingerprint: headlessResult.bestScoring && headlessResult.bestScoring.scorerFingerprint
+      ? headlessResult.bestScoring.scorerFingerprint
+      : null,
+    scorerFingerprintShort: headlessResult.bestScoring && headlessResult.bestScoring.scorerFingerprintShort
+      ? headlessResult.bestScoring.scorerFingerprintShort
+      : null,
+    scorerSource: headlessResult.bestScoring && headlessResult.bestScoring.scorerSource
+      ? headlessResult.bestScoring.scorerSource
+      : null,
     trialSpec: trialSpec,
     rng: rng,
     candidatePoolsSummary: includeCandidatePoolsSummary
@@ -238,6 +260,12 @@ function validateTransportTrialResult_(transportResult) {
       issues.push("transportResult.bestScoring must be an object or null.");
     } else if (transportResult.bestScoring.ok !== true) {
       issues.push("transportResult.bestScoring must be ok when present.");
+    }
+  }
+
+  if (transportResult && transportResult.scorerFingerprint !== undefined && transportResult.scorerFingerprint !== null) {
+    if (typeof transportResult.scorerFingerprint !== "string" || !transportResult.scorerFingerprint) {
+      issues.push("transportResult.scorerFingerprint must be a non-empty string when present.");
     }
   }
 

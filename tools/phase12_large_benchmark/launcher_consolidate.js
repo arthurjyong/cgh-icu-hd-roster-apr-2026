@@ -188,6 +188,22 @@ function normalizeCampaignRunRecord(record) {
     safeRecord.artifactFileName = null;
   }
 
+  if (typeof safeRecord.scorerFingerprint !== 'string' || !safeRecord.scorerFingerprint) {
+    safeRecord.scorerFingerprint = null;
+  }
+
+  if (typeof safeRecord.scorerFingerprintShort !== 'string' || !safeRecord.scorerFingerprintShort) {
+    safeRecord.scorerFingerprintShort = null;
+  }
+
+  if (typeof safeRecord.scorerFingerprintVersion !== 'string' || !safeRecord.scorerFingerprintVersion) {
+    safeRecord.scorerFingerprintVersion = null;
+  }
+
+  if (typeof safeRecord.scorerSource !== 'string' || !safeRecord.scorerSource) {
+    safeRecord.scorerSource = null;
+  }
+
   if (typeof safeRecord.failureMessage !== 'string' || !safeRecord.failureMessage) {
     safeRecord.failureMessage = null;
   }

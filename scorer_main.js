@@ -10,6 +10,28 @@ function buildDoctorLookup_(parseResult) {
   return byDoctorId;
 }
 
+function getScoringContractVersion_() {
+  return 2;
+}
+
+function getScorerLogicVersion_() {
+  return "phase3_scorer_identity_v1";
+}
+
+function getScorerComponentKeys_() {
+  return [
+    "unfilledPenalty",
+    "pointBalanceWithinSection",
+    "pointBalanceGlobal",
+    "spacingPenalty",
+    "preLeavePenalty",
+    "crReward",
+    "dualEligibleIcuBonus",
+    "standbyAdjacencyPenalty",
+    "standbyCountFairnessPenalty"
+  ];
+}
+
 function buildCalendarDayLookup_(parseResult) {
   const byDateKey = {};
   const calendarDays = parseResult && parseResult.calendarDays ? parseResult.calendarDays : [];
@@ -1175,10 +1197,14 @@ function scoreAllocation_(allocationResult, parseResult, scorerConfigResultOverr
 
   return {
     ok: true,
-    contractVersion: 2,
+    contractVersion: getScoringContractVersion_(),
     totalScore: totalScore,
     scorerWeights: scorerWeights,
     scorerConfig: scorerConfigResult,
+    scorerFingerprint: scorerConfigResult.scorerFingerprint || null,
+    scorerFingerprintShort: scorerConfigResult.scorerFingerprintShort || null,
+    scorerFingerprintVersion: scorerConfigResult.scorerFingerprintVersion || null,
+    scorerSource: scorerConfigResult.scorerSource || scorerConfigResult.source || null,
 
     components: {
       unfilledPenalty: unfilledPenalty,

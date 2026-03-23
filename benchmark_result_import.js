@@ -395,6 +395,10 @@ function buildBenchmarkImportSummary_(loaded) {
     seed: transportResult.trialSpec ? transportResult.trialSpec.seed : null,
     rngKind: transportResult.rng ? transportResult.rng.kind : null,
     normalizedSeed: transportResult.rng ? transportResult.rng.normalizedSeed : null,
+    scorerFingerprint: transportResult.scorerFingerprint || null,
+    scorerFingerprintShort: transportResult.scorerFingerprintShort || null,
+    scorerFingerprintVersion: transportResult.scorerFingerprintVersion || null,
+    scorerSource: transportResult.scorerSource || (bestScoring && bestScoring.scorerSource) || null,
     bestTrialIndex: bestTrial.index,
     bestScore: bestTrial.score,
     hasBestAllocation: !!bestAllocation,
@@ -440,6 +444,10 @@ function buildBenchmarkImportSummaryRows_(summary) {
     ["Seed", summary.seed],
     ["RNG kind", summary.rngKind],
     ["Normalized seed", summary.normalizedSeed],
+    ["Scorer fingerprint", summary.scorerFingerprint],
+    ["Scorer fingerprint short", summary.scorerFingerprintShort],
+    ["Scorer fingerprint version", summary.scorerFingerprintVersion],
+    ["Scorer source", summary.scorerSource],
     ["Best trial index", summary.bestTrialIndex],
     ["Best score", summary.bestScore],
     ["Has best allocation", summary.hasBestAllocation],
@@ -1111,6 +1119,10 @@ function buildBenchmarkTrialsRowsFromCampaignReport_(loaded, importTimestamp) {
       Seed: safeStringOrBlank_(run.seed),
       RunFolderName: safeStringOrBlank_(run.runFolderName),
       ArtifactFileName: safeStringOrBlank_(run.artifactFileName),
+      ScorerFingerprint: safeStringOrBlank_(run.scorerFingerprint || (scoring && scoring.scorerFingerprint)),
+      ScorerFingerprintShort: safeStringOrBlank_(run.scorerFingerprintShort || (scoring && scoring.scorerFingerprintShort)),
+      ScorerFingerprintVersion: safeStringOrBlank_(run.scorerFingerprintVersion || (scoring && scoring.scorerFingerprintVersion)),
+      ScorerSource: safeStringOrBlank_(run.scorerSource || (scoring && scoring.scorerSource)),
       MeanPoints: safeFiniteNumberOrBlank_(scoring.meanPoints),
       StandardDeviation: safeFiniteNumberOrBlank_(scoring.standardDeviation),
       Range: safeFiniteNumberOrBlank_(scoring.range),
@@ -1217,7 +1229,11 @@ function buildBenchmarkCampaignImportSummary_(loaded) {
     winnerRunId: winner.runId || null,
     winnerTrialCount: winner.trialCount || null,
     winnerRepeatIndex: winner.repeatIndex || null,
-    winnerBestScore: winner.bestScore || null
+    winnerBestScore: winner.bestScore || null,
+    winnerScorerFingerprint: winner.scorerFingerprint || null,
+    winnerScorerFingerprintShort: winner.scorerFingerprintShort || null,
+    winnerScorerFingerprintVersion: winner.scorerFingerprintVersion || null,
+    winnerScorerSource: winner.scorerSource || null
   };
 }
 
@@ -1829,6 +1845,10 @@ function buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, includeTr
     repeatIndex: isFiniteNumberValue_(candidate.RepeatIndex) ? Number(candidate.RepeatIndex) : null,
     bestScore: isFiniteNumberValue_(candidate.BestScore) ? Number(candidate.BestScore) : null,
     invocationMode: candidate.InvocationMode || null,
+    scorerFingerprint: candidate.ScorerFingerprint || null,
+    scorerFingerprintShort: candidate.ScorerFingerprintShort || null,
+    scorerFingerprintVersion: candidate.ScorerFingerprintVersion || null,
+    scorerSource: candidate.ScorerSource || null,
     runFolderName: resolved.runFolderName || null,
     artifactFileName: resolved.artifactFileName || null,
     artifactFileId: resolved.artifactFileId || null,
@@ -1843,6 +1863,10 @@ function buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, includeTr
       bestTrialIndex: isFiniteNumberValue_(bestTrial.index) ? Number(bestTrial.index) : null,
       bestScore: isFiniteNumberValue_(bestTrial.score) ? Number(bestTrial.score) : null,
       invocationMode: transportResult.invocationMode || null,
+      scorerFingerprint: transportResult.scorerFingerprint || null,
+      scorerFingerprintShort: transportResult.scorerFingerprintShort || null,
+      scorerFingerprintVersion: transportResult.scorerFingerprintVersion || null,
+      scorerSource: transportResult.scorerSource || null,
       allocationDayCount: Array.isArray(bestAllocation.days) ? bestAllocation.days.length : null
     }
   };

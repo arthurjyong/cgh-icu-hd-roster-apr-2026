@@ -250,6 +250,10 @@ function applyStatusSummaryToEntry(entry, summary) {
   entry.currentBestScore = summary.currentBestScore;
   entry.currentBestTrialCount = summary.currentBestTrialCount;
   entry.currentBestRepeatIndex = summary.currentBestRepeatIndex;
+  entry.currentBestScorerFingerprint = summary.currentBestScorerFingerprint;
+  entry.currentBestScorerFingerprintShort = summary.currentBestScorerFingerprintShort;
+  entry.currentBestScorerFingerprintVersion = summary.currentBestScorerFingerprintVersion;
+  entry.currentBestScorerSource = summary.currentBestScorerSource;
   entry.lastUpdated = summary.lastUpdated || entry.lastUpdated;
   entry.completedAt = summary.completedAt || entry.completedAt;
   entry.errorMessage = summary.errorMessage || null;
@@ -293,6 +297,10 @@ function flattenStatusLikeObject(obj) {
     currentBestScore: obj && obj.currentBestScore != null ? obj.currentBestScore : (best.bestScore != null ? best.bestScore : null),
     currentBestTrialCount: obj && obj.currentBestTrialCount != null ? obj.currentBestTrialCount : (best.trialCount != null ? best.trialCount : null),
     currentBestRepeatIndex: obj && obj.currentBestRepeatIndex != null ? obj.currentBestRepeatIndex : (best.repeatIndex != null ? best.repeatIndex : null),
+    currentBestScorerFingerprint: obj && obj.currentBestScorerFingerprint != null ? obj.currentBestScorerFingerprint : (best.scorerFingerprint != null ? best.scorerFingerprint : null),
+    currentBestScorerFingerprintShort: obj && obj.currentBestScorerFingerprintShort != null ? obj.currentBestScorerFingerprintShort : (best.scorerFingerprintShort != null ? best.scorerFingerprintShort : null),
+    currentBestScorerFingerprintVersion: obj && obj.currentBestScorerFingerprintVersion != null ? obj.currentBestScorerFingerprintVersion : (best.scorerFingerprintVersion != null ? best.scorerFingerprintVersion : null),
+    currentBestScorerSource: obj && obj.currentBestScorerSource != null ? obj.currentBestScorerSource : (best.scorerSource != null ? best.scorerSource : null),
     lastUpdated: obj && obj.lastUpdated ? obj.lastUpdated : null,
     completedAt: obj && obj.completedAt ? obj.completedAt : null,
     errorMessage: obj && obj.errorMessage ? obj.errorMessage : null,
@@ -318,6 +326,10 @@ function flattenStartResult(entry) {
     currentBestScore: entry.currentBestScore,
     currentBestTrialCount: entry.currentBestTrialCount,
     currentBestRepeatIndex: entry.currentBestRepeatIndex,
+    currentBestScorerFingerprint: entry.currentBestScorerFingerprint,
+    currentBestScorerFingerprintShort: entry.currentBestScorerFingerprintShort,
+    currentBestScorerFingerprintVersion: entry.currentBestScorerFingerprintVersion,
+    currentBestScorerSource: entry.currentBestScorerSource,
     lastUpdated: entry.lastUpdated,
     completedAt: entry.completedAt,
     errorMessage: entry.errorMessage,
@@ -469,6 +481,10 @@ async function handleCampaignStart(req, res, config) {
     currentBestScore: null,
     currentBestTrialCount: null,
     currentBestRepeatIndex: null,
+    currentBestScorerFingerprint: null,
+    currentBestScorerFingerprintShort: null,
+    currentBestScorerFingerprintVersion: null,
+    currentBestScorerSource: null,
     lastUpdated: null,
     completedAt: null,
     errorMessage: null,

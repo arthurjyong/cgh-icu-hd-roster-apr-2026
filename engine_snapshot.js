@@ -44,8 +44,14 @@ function buildComputeSnapshotFromParseResult_(parseResult, scorerConfigResult, o
 
     scorer: {
       source: scorerConfigResult ? scorerConfigResult.source : null,
+      scorerSource: scorerConfigResult ? scorerConfigResult.scorerSource : null,
       sheetName: scorerConfigResult ? scorerConfigResult.sheetName : null,
-      weights: scorerConfigResult ? scorerConfigResult.weights : null
+      weights: scorerConfigResult ? scorerConfigResult.weights : null,
+      scorerFingerprintVersion: scorerConfigResult ? scorerConfigResult.scorerFingerprintVersion : null,
+      scorerFingerprint: scorerConfigResult ? scorerConfigResult.scorerFingerprint : null,
+      scorerFingerprintShort: scorerConfigResult ? scorerConfigResult.scorerFingerprintShort : null,
+      scorerFingerprintHash: scorerConfigResult ? scorerConfigResult.scorerFingerprintHash : null,
+      scorerIdentityPayload: scorerConfigResult ? scorerConfigResult.scorerIdentityPayload : null
     },
 
     metadata: {

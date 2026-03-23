@@ -161,7 +161,11 @@ function buildCampaignReportDocument(options) {
       bestScore: typeof winnerRunRecord.bestScore === 'number' ? winnerRunRecord.bestScore : null,
       bestTrialIndex: Number.isInteger(winnerRunRecord.bestTrialIndex) ? winnerRunRecord.bestTrialIndex : null,
       runFolderName: winnerRunRecord.runFolderName || null,
-      artifactFileName: winnerRunRecord.artifactFileName || null
+      artifactFileName: winnerRunRecord.artifactFileName || null,
+      scorerFingerprint: winnerRunRecord.scorerFingerprint || null,
+      scorerFingerprintShort: winnerRunRecord.scorerFingerprintShort || null,
+      scorerFingerprintVersion: winnerRunRecord.scorerFingerprintVersion || null,
+      scorerSource: winnerRunRecord.scorerSource || null
     } : null,
     runs
   };
@@ -213,7 +217,11 @@ function summarizeWinnerRecord(record) {
     meanPoints: record && typeof record.meanPoints === 'number' ? record.meanPoints : null,
     standardDeviation: record && typeof record.standardDeviation === 'number' ? record.standardDeviation : null,
     range: record && typeof record.range === 'number' ? record.range : null,
-    totalScore: record && typeof record.totalScore === 'number' ? record.totalScore : null
+    totalScore: record && typeof record.totalScore === 'number' ? record.totalScore : null,
+    scorerFingerprint: record ? record.scorerFingerprint || null : null,
+    scorerFingerprintShort: record ? record.scorerFingerprintShort || null : null,
+    scorerFingerprintVersion: record ? record.scorerFingerprintVersion || null : null,
+    scorerSource: record ? record.scorerSource || null : null
   };
 }
 

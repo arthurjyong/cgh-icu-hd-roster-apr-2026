@@ -245,7 +245,11 @@ function extractWinnerFromReport(report) {
     bestTrialIndex: Number.isInteger(winner.bestTrialIndex) ? winner.bestTrialIndex : (matchingRun && Number.isInteger(matchingRun.bestTrialIndex) ? matchingRun.bestTrialIndex : null),
     runFolderName: winner.runFolderName || (matchingRun ? matchingRun.runFolderName || null : null),
     artifactFileName: winner.artifactFileName || (matchingRun ? matchingRun.artifactFileName || null : null),
-    invocationMode: matchingRun ? matchingRun.invocationMode || null : null
+    invocationMode: matchingRun ? matchingRun.invocationMode || null : null,
+    scorerFingerprint: winner.scorerFingerprint || (matchingRun ? matchingRun.scorerFingerprint || null : null),
+    scorerFingerprintShort: winner.scorerFingerprintShort || (matchingRun ? matchingRun.scorerFingerprintShort || null : null),
+    scorerFingerprintVersion: winner.scorerFingerprintVersion || (matchingRun ? matchingRun.scorerFingerprintVersion || null : null),
+    scorerSource: winner.scorerSource || (matchingRun ? matchingRun.scorerSource || null : null)
   };
 }
 

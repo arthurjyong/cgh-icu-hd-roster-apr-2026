@@ -297,6 +297,21 @@ function getBestTrialComponentScores(transportResult) {
   return hasAny ? result : null;
 }
 
+function getScorerMetadataFromTransportResult(transportResult) {
+  const bestScoring = transportResult && transportResult.bestScoring ? transportResult.bestScoring : null;
+  const scoringSummary = getBestTrialScoringSummary(transportResult);
+
+  return {
+    scorerFingerprint: (bestScoring && bestScoring.scorerFingerprint) || (scoringSummary && scoringSummary.scorerFingerprint) || (transportResult && transportResult.scorerFingerprint) || null,
+    scorerFingerprintShort: (bestScoring && bestScoring.scorerFingerprintShort) || (scoringSummary && scoringSummary.scorerFingerprintShort) || (transportResult && transportResult.scorerFingerprintShort) || null,
+    scorerFingerprintVersion: (bestScoring && bestScoring.scorerFingerprintVersion) || (scoringSummary && scoringSummary.scorerFingerprintVersion) || (transportResult && transportResult.scorerFingerprintVersion) || null,
+    scorerSource: (bestScoring && (bestScoring.scorerSource || (bestScoring.scorerConfig && bestScoring.scorerConfig.source)))
+      || (scoringSummary && scoringSummary.scorerSource)
+      || (transportResult && transportResult.scorerSource)
+      || null
+  };
+}
+
 function summarizeWinnerRecordForOutput(record) {
   if (!record) {
     return null;
@@ -306,6 +321,7 @@ function summarizeWinnerRecordForOutput(record) {
   const transportResult = record.transportResult || null;
   const scoringSummary = getBestTrialScoringSummary(transportResult);
   const componentScores = getBestTrialComponentScores(transportResult);
+  const scorerMetadata = getScorerMetadataFromTransportResult(transportResult);
 
   const meanPoints = scoringSummary && typeof scoringSummary.meanPoints === 'number'
     ? scoringSummary.meanPoints
@@ -334,7 +350,11 @@ function summarizeWinnerRecordForOutput(record) {
     standardDeviation,
     range,
     totalScore,
-    componentScores
+    componentScores,
+    scorerFingerprint: scorerMetadata.scorerFingerprint,
+    scorerFingerprintShort: scorerMetadata.scorerFingerprintShort,
+    scorerFingerprintVersion: scorerMetadata.scorerFingerprintVersion,
+    scorerSource: scorerMetadata.scorerSource
   };
 }
 
@@ -362,6 +382,10 @@ function summarizeCampaignWinnerForOutput(record) {
     invocationMode: record.invocationMode || null,
     runFolderName: record.runFolderName || null,
     artifactFileName: record.artifactFileName || null,
+    scorerFingerprint: record.scorerFingerprint || null,
+    scorerFingerprintShort: record.scorerFingerprintShort || null,
+    scorerFingerprintVersion: record.scorerFingerprintVersion || null,
+    scorerSource: record.scorerSource || null,
     meanPoints: record.scoring && typeof record.scoring.meanPoints === 'number'
       ? record.scoring.meanPoints
       : null,
@@ -445,13 +469,18 @@ function extractChunkWinnerRecord(execution) {
   const bestTrial = execution && execution.transportResult && execution.transportResult.bestTrial
     ? execution.transportResult.bestTrial
     : null;
+  const scorerMetadata = getScorerMetadataFromTransportResult(execution && execution.transportResult);
 
   return {
     chunk: execution.chunk,
     bestScore: bestTrial && typeof bestTrial.score === 'number' ? bestTrial.score : null,
     bestTrialIndex: bestTrial && typeof bestTrial.index === 'number' ? bestTrial.index : null,
     transportSummary: execution.transportSummary || null,
-    transportResult: execution.transportResult || null
+    transportResult: execution.transportResult || null,
+    scorerFingerprint: scorerMetadata.scorerFingerprint,
+    scorerFingerprintShort: scorerMetadata.scorerFingerprintShort,
+    scorerFingerprintVersion: scorerMetadata.scorerFingerprintVersion,
+    scorerSource: scorerMetadata.scorerSource
   };
 }
 
@@ -689,6 +718,10 @@ function buildCampaignRunRecord(runSpec, runConfig, snapshotInfo, runSummary, ru
   const artifactFileName = runSummary && runSummary.ok && runSummary.artifacts
     ? 'global_best.transport_trial_result_v1.json'
     : null;
+  const scorerFingerprint = globalBest && globalBest.scorerFingerprint ? globalBest.scorerFingerprint : null;
+  const scorerFingerprintShort = globalBest && globalBest.scorerFingerprintShort ? globalBest.scorerFingerprintShort : null;
+  const scorerFingerprintVersion = globalBest && globalBest.scorerFingerprintVersion ? globalBest.scorerFingerprintVersion : null;
+  const scorerSource = globalBest && globalBest.scorerSource ? globalBest.scorerSource : null;
 
   return {
     runId: runSpec.runId,
@@ -704,6 +737,10 @@ function buildCampaignRunRecord(runSpec, runConfig, snapshotInfo, runSummary, ru
     invocationMode: globalBest ? globalBest.invocationMode || null : null,
     runFolderName,
     artifactFileName,
+    scorerFingerprint,
+    scorerFingerprintShort,
+    scorerFingerprintVersion,
+    scorerSource,
     snapshotFileName: snapshotInfo.file.fileName,
     snapshotFileSha256: snapshotInfo.file.fileSha256,
     snapshotContractVersion: snapshotInfo.snapshot.contractVersion,
@@ -712,6 +749,10 @@ function buildCampaignRunRecord(runSpec, runConfig, snapshotInfo, runSummary, ru
       standardDeviation: typeof globalBest.standardDeviation === 'number' ? globalBest.standardDeviation : null,
       range: typeof globalBest.range === 'number' ? globalBest.range : null,
       totalScore: typeof globalBest.totalScore === 'number' ? globalBest.totalScore : null,
+      scorerFingerprint,
+      scorerFingerprintShort,
+      scorerFingerprintVersion,
+      scorerSource,
       componentScores: globalBest.componentScores && typeof globalBest.componentScores === 'object'
         ? JSON.parse(JSON.stringify(globalBest.componentScores))
         : null
