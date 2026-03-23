@@ -167,7 +167,7 @@ function compareChunkWinnerRecords(left, right) {
   const rightScore = right && right.bestScore;
 
   if (leftScore !== rightScore) {
-    return rightScore - leftScore;
+    return leftScore - rightScore;
   }
 
   const leftChunkNumber = left && left.chunk ? left.chunk.chunkNumber : Number.MAX_SAFE_INTEGER;
