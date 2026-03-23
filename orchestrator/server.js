@@ -207,6 +207,54 @@ function fileSha256OrNull(filePath) {
   }
 }
 
+function getCampaignDir(config, campaignFolderName) {
+  return path.join(config.outputRootDir, campaignFolderName);
+}
+
+function getCampaignStatusFilePath(config, campaignFolderName) {
+  return path.join(
+    getCampaignDir(config, campaignFolderName),
+    'benchmark_campaign_status_v1.json'
+  );
+}
+
+function readJsonFileIfExists(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw || !raw.trim()) {
+      return null;
+    }
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function applyStatusSummaryToEntry(entry, summary) {
+  if (!entry || !summary) {
+    return entry;
+  }
+  entry.batchLabel = summary.batchLabel || entry.batchLabel;
+  entry.snapshotFileName = summary.snapshotFileName || entry.snapshotFileName;
+  entry.snapshotFileSha256 = summary.snapshotFileSha256 || entry.snapshotFileSha256;
+  entry.status = summary.status || entry.status;
+  entry.plannedRunCount = summary.plannedRunCount != null ? summary.plannedRunCount : entry.plannedRunCount;
+  entry.completedRunCount = summary.completedRunCount != null ? summary.completedRunCount : entry.completedRunCount;
+  entry.okCount = summary.okCount != null ? summary.okCount : entry.okCount;
+  entry.failedCount = summary.failedCount != null ? summary.failedCount : entry.failedCount;
+  entry.currentBestRunId = summary.currentBestRunId;
+  entry.currentBestScore = summary.currentBestScore;
+  entry.currentBestTrialCount = summary.currentBestTrialCount;
+  entry.currentBestRepeatIndex = summary.currentBestRepeatIndex;
+  entry.lastUpdated = summary.lastUpdated || entry.lastUpdated;
+  entry.completedAt = summary.completedAt || entry.completedAt;
+  entry.errorMessage = summary.errorMessage || null;
+  return entry;
+}
+
 function buildCampaignFolderName(batchLabel, snapshotSha256, startedAtIso) {
   const startedAt = new Date(startedAtIso);
   const parts = [
@@ -460,22 +508,16 @@ async function handleCampaignStart(req, res, config) {
       entry.completedAt = entry.lastUpdated;
       if (result.campaignStatusSummary) {
         const summary = flattenStatusLikeObject(result.campaignStatusSummary);
-        entry.batchLabel = summary.batchLabel || entry.batchLabel;
-        entry.snapshotFileName = summary.snapshotFileName || entry.snapshotFileName;
-        entry.snapshotFileSha256 = summary.snapshotFileSha256 || entry.snapshotFileSha256;
-        entry.status = summary.status || entry.status;
-        entry.plannedRunCount = summary.plannedRunCount != null ? summary.plannedRunCount : entry.plannedRunCount;
-        entry.completedRunCount = summary.completedRunCount != null ? summary.completedRunCount : entry.completedRunCount;
-        entry.okCount = summary.okCount != null ? summary.okCount : entry.okCount;
-        entry.failedCount = summary.failedCount != null ? summary.failedCount : entry.failedCount;
-        entry.currentBestRunId = summary.currentBestRunId;
-        entry.currentBestScore = summary.currentBestScore;
-        entry.currentBestTrialCount = summary.currentBestTrialCount;
-        entry.currentBestRepeatIndex = summary.currentBestRepeatIndex;
-        entry.lastUpdated = summary.lastUpdated || entry.lastUpdated;
-        entry.completedAt = summary.completedAt || entry.completedAt;
-        entry.errorMessage = summary.errorMessage || null;
+        applyStatusSummaryToEntry(entry, summary);
       }
+
+      const statusFilePath = getCampaignStatusFilePath(config, entry.campaignFolderName);
+      const persistedStatus = readJsonFileIfExists(statusFilePath);
+      if (persistedStatus && persistedStatus.campaignId === campaignId) {
+        const summary = flattenStatusLikeObject(persistedStatus);
+        applyStatusSummaryToEntry(entry, summary);
+      }
+
       return result;
     })
     .catch((error) => {
@@ -505,6 +547,16 @@ async function handleCampaignStatus(req, res, config) {
   const entry = activeCampaigns.get(campaignId);
   if (!entry) {
     sendJson(res, 404, { ok: false, error: 'Campaign not found.' });
+    return;
+  }
+
+  const statusFilePath = getCampaignStatusFilePath(config, entry.campaignFolderName);
+  const persistedStatus = readJsonFileIfExists(statusFilePath);
+
+  if (persistedStatus && persistedStatus.campaignId === campaignId) {
+    const summary = flattenStatusLikeObject(persistedStatus);
+    applyStatusSummaryToEntry(entry, summary);
+    sendJson(res, 200, summary);
     return;
   }
 
