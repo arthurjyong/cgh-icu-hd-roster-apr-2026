@@ -412,9 +412,10 @@ Recommended sync checklist:
 2. `git pull --ff-only`
 3. `clasp status`
 4. if Apps Script was edited remotely, `clasp pull`
-5. re-run any local checks that depend on pulled Apps Script files
-6. `git push`
-7. `clasp push`
+5. if `clasp pull` changed tracked files, review and commit those changes before continuing
+6. re-run any local checks that depend on pulled Apps Script files
+7. `git push`
+8. `clasp push`
 
 Operational note:
 - this repository intentionally does not track `.clasp.json`
