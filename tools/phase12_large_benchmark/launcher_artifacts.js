@@ -217,6 +217,53 @@ function summarizeWinnerRecord(record) {
   };
 }
 
+function buildPromotedRunLevelTransportResult(record, options) {
+  const sourceRecord = record || {};
+  const sourceOptions = options || {};
+  const transportResult = sourceRecord.transportResult;
+
+  if (!transportResult || typeof transportResult !== 'object') {
+    return null;
+  }
+
+  const runTrialCount = Number.isInteger(sourceOptions.totalTrials)
+    ? sourceOptions.totalTrials
+    : null;
+
+  if (!Number.isInteger(runTrialCount) || runTrialCount <= 0) {
+    throw new Error('buildPromotedRunLevelTransportResult requires a positive integer totalTrials.');
+  }
+
+  const originalTrialSpec = transportResult.trialSpec && typeof transportResult.trialSpec === 'object'
+    ? JSON.parse(JSON.stringify(transportResult.trialSpec))
+    : {};
+
+  const promoted = JSON.parse(JSON.stringify(transportResult));
+  promoted.trialSpec = {
+    ...originalTrialSpec,
+    trialCount: runTrialCount
+  };
+
+  promoted.runLevelPromotion = {
+    promotedAtIso: new Date().toISOString(),
+    runTrialCount,
+    runSeed: typeof sourceOptions.baseSeed === 'string' && sourceOptions.baseSeed.trim()
+      ? sourceOptions.baseSeed
+      : null,
+    sourceChunk: {
+      chunkNumber: sourceRecord && sourceRecord.chunk ? sourceRecord.chunk.chunkNumber : null,
+      startTrialIndex: sourceRecord && sourceRecord.chunk ? sourceRecord.chunk.startTrialIndex : null,
+      endTrialIndexExclusive: sourceRecord && sourceRecord.chunk ? sourceRecord.chunk.endTrialIndexExclusive : null,
+      trialCount: sourceRecord && sourceRecord.chunk ? sourceRecord.chunk.trialCount : null,
+      chunkSeed: sourceRecord && sourceRecord.chunk ? sourceRecord.chunk.chunkSeed : null
+    },
+    sourceTrialSpec: originalTrialSpec
+  };
+
+  return promoted;
+}
+
+
 function buildDriveUploadArtifactSet(artifactWriteResult) {
   if (!artifactWriteResult || typeof artifactWriteResult !== 'object') {
     throw new Error('artifactWriteResult is required to build Drive upload artifact set.');
@@ -572,7 +619,13 @@ function createLocalArtifactWriter(options) {
 
     let globalBestSummary = null;
     if (safeState.globalBestRecord && safeState.globalBestRecord.transportResult) {
-      writeJsonFile(paths.checkpointGlobalBestPath, safeState.globalBestRecord.transportResult);
+      writeJsonFile(
+        paths.checkpointGlobalBestPath,
+        buildPromotedRunLevelTransportResult(safeState.globalBestRecord, {
+          totalTrials: config.totalTrials,
+          baseSeed: config.baseSeed
+        })
+      );
       globalBestSummary = {
         ...summarizeWinnerRecord(safeState.globalBestRecord),
         transportFileName: path.basename(paths.checkpointGlobalBestPath)
@@ -678,7 +731,13 @@ function createLocalArtifactWriter(options) {
     writeJsonFile(paths.manifestPath, manifest);
 
     if (globalBestRecord && globalBestRecord.transportResult) {
-      writeJsonFile(paths.globalBestPath, globalBestRecord.transportResult);
+      writeJsonFile(
+        paths.globalBestPath,
+        buildPromotedRunLevelTransportResult(globalBestRecord, {
+          totalTrials: config.totalTrials,
+          baseSeed: config.baseSeed
+        })
+      );
     } else {
       removeFileIfExists(paths.globalBestPath);
     }
@@ -731,5 +790,6 @@ module.exports = {
   summarizeChunkFailure,
   summarizeChunkSuccess,
   summarizeWinnerRecord,
+  buildPromotedRunLevelTransportResult,
   writeDriveUploadSummary
 };
