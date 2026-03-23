@@ -388,7 +388,7 @@ function validateCampaignStartBody(body) {
     campaignBatchLabel: typeof source.campaignBatchLabel === 'string' && source.campaignBatchLabel.trim()
       ? source.campaignBatchLabel.trim()
       : 'benchmark_campaign',
-    baseSeed: validatePositiveInteger(source.baseSeed, 'baseSeed'),
+    baseSeed: validateOptionalIntegerOrNull(source.baseSeed, 'baseSeed'),
     campaignId: typeof source.campaignId === 'string' && source.campaignId.trim()
       ? source.campaignId.trim()
       : null,
@@ -451,6 +451,7 @@ async function handleCampaignStart(req, res, config) {
   const snapshotSha256 = downloadedSnapshot.sha256 || request.snapshot.fileSha256 || fileSha256OrNull(downloadedSnapshot.localPath);
   const campaignFolderName = buildCampaignFolderName(request.campaignBatchLabel, snapshotSha256, startedAt);
   const plannedRunCount = request.campaignTrialCounts.length * request.campaignRepeats;
+  const resolvedBaseSeed = request.baseSeed == null ? '12345' : String(request.baseSeed);
 
   const entry = {
     campaignId,
@@ -458,7 +459,7 @@ async function handleCampaignStart(req, res, config) {
     batchLabel: request.campaignBatchLabel,
     snapshotFileName: downloadedSnapshot.fileName,
     snapshotFileSha256: snapshotSha256,
-    baseSeed: request.baseSeed == null ? null : String(request.baseSeed),
+    baseSeed: resolvedBaseSeed,
     status: 'PENDING',
     plannedRunCount,
     completedRunCount: null,
@@ -483,7 +484,7 @@ async function handleCampaignStart(req, res, config) {
     campaignBatchLabel: request.campaignBatchLabel,
     campaignTrialCounts: request.campaignTrialCounts,
     campaignRepeats: request.campaignRepeats,
-    baseSeed: request.baseSeed == null ? null : String(request.baseSeed),
+    baseSeed: resolvedBaseSeed,
     snapshotPath: downloadedSnapshot.localPath,
     snapshotFileName: downloadedSnapshot.fileName,
     snapshotFileSha256: snapshotSha256,
