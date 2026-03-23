@@ -1441,6 +1441,57 @@ function numericValueOrNull_(value) {
   return isFiniteNumberValue_(value) ? Number(value) : null;
 }
 
+function buildDuplicateBenchmarkTrialsRunIdError_(duplicates, contextLabel) {
+  const entries = Array.isArray(duplicates) ? duplicates : [];
+  const label = contextLabel || 'valid writeback candidates';
+  const details = entries.slice(0, 3).map(function(entry) {
+    return 'RunId "' + entry.runId + '" rows ' + entry.rows.join(', ');
+  }).join('; ');
+
+  return new Error(
+    'BENCHMARK_TRIALS contains duplicate RunId values among ' + label + '. ' +
+    'RunId is now expected to be globally unique across campaigns, so duplicates indicate legacy retained rows or an import integrity problem. ' +
+    (details ? 'Duplicates: ' + details + '.' : '')
+  );
+}
+
+function collectDuplicateBenchmarkTrialsRunIds_(candidates) {
+  const rows = Array.isArray(candidates) ? candidates : [];
+  const map = {};
+  const order = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const candidate = rows[i] || {};
+    const normalized = trimmedStringOrBlank_(candidate.RunIdNormalized);
+    if (!normalized) {
+      continue;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(map, normalized)) {
+      map[normalized] = {
+        runId: trimmedStringOrBlank_(candidate.RunId) || normalized,
+        rows: []
+      };
+      order.push(normalized);
+    }
+
+    map[normalized].rows.push(Number(candidate._rowNumber || 0));
+  }
+
+  return order.map(function(key) {
+    return map[key];
+  }).filter(function(entry) {
+    return entry.rows.length > 1;
+  });
+}
+
+function assertNoDuplicateBenchmarkTrialsRunIds_(candidates, contextLabel) {
+  const duplicates = collectDuplicateBenchmarkTrialsRunIds_(candidates);
+  if (duplicates.length > 0) {
+    throw buildDuplicateBenchmarkTrialsRunIdError_(duplicates, contextLabel);
+  }
+}
+
 function buildBenchmarkTrialsWritebackCandidates_(rowObjects) {
   const candidates = [];
   const rows = Array.isArray(rowObjects) ? rowObjects : [];
@@ -1736,6 +1787,7 @@ function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
 function selectBestBenchmarkTrialsWinnerForWriteback_() {
   const trialsData = readBenchmarkTrialsRowsAsObjects_();
   const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
+  assertNoDuplicateBenchmarkTrialsRunIds_(candidates, 'valid writeback candidates');
   const campaignFolderName = resolveSingleCampaignFolderInTrialsSheet_(candidates);
   const campaignCandidates = candidates.filter(function(candidate) {
     return candidate.CampaignFolderName === campaignFolderName;
@@ -1824,16 +1876,14 @@ function selectBenchmarkTrialsRunIdForWriteback_(runId) {
   if (matches.length === 0) {
     throw new Error(
       'No valid BENCHMARK_TRIALS candidate was found for RunId "' + requestedRunId + '". ' +
-      'Run a REPLACE campaign import first and confirm the RunId exists.'
+      'Confirm the imported campaign history contains that exact RunId.'
     );
   }
 
-  if (matches.length > 1) {
-    throw new Error(
-      'Multiple BENCHMARK_TRIALS candidates matched RunId "' + requestedRunId + '". ' +
-      'Run a REPLACE campaign import so only one campaign is in scope, then try again.'
-    );
-  }
+  assertNoDuplicateBenchmarkTrialsRunIds_(
+    matches,
+    'the requested RunId "' + requestedRunId + '"'
+  );
 
   const selectedCandidate = matches[0];
   const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWriteback_(selectedCandidate);

@@ -199,6 +199,21 @@ function normalizeCampaignRunRecord(record) {
   return safeRecord;
 }
 
+function assertUniqueCampaignRunIds(records) {
+  const seen = new Set();
+
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    const runId = record && typeof record.runId === 'string' ? record.runId.trim() : '';
+    if (!runId) {
+      return;
+    }
+    if (seen.has(runId)) {
+      throw new Error(`Duplicate campaign runId detected: ${runId}`);
+    }
+    seen.add(runId);
+  });
+}
+
 function createCampaignConsolidator(options) {
   const source = options || {};
   const totalPlanned = Number.isInteger(source.totalPlanned) && source.totalPlanned >= 0
@@ -208,6 +223,8 @@ function createCampaignConsolidator(options) {
   let runs = Array.isArray(source.initialRuns)
     ? source.initialRuns.map(normalizeCampaignRunRecord)
     : [];
+
+  assertUniqueCampaignRunIds(runs);
 
   let winnerRunRecord = null;
 
@@ -229,6 +246,11 @@ function createCampaignConsolidator(options) {
 
   function recordRunResult(record) {
     const safeRecord = normalizeCampaignRunRecord(record);
+
+    if (runs.some((existing) => existing.runId === safeRecord.runId)) {
+      throw new Error(`Duplicate campaign runId detected: ${safeRecord.runId}`);
+    }
+
     runs.push(safeRecord);
 
     if (

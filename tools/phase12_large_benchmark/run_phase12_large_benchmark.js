@@ -19,6 +19,57 @@ function emitJson(value, stream) {
   target.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+function sanitizeCampaignPathComponent(value, fallbackValue) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return fallbackValue;
+  }
+
+  const cleaned = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return cleaned || fallbackValue;
+}
+
+function formatCampaignTimestamp(date) {
+  const source = date instanceof Date ? date : new Date(date || Date.now());
+  const pad = (value) => String(value).padStart(2, '0');
+
+  return [
+    String(source.getFullYear()),
+    pad(source.getMonth() + 1),
+    pad(source.getDate())
+  ].join('') + '_' + [
+    pad(source.getHours()),
+    pad(source.getMinutes()),
+    pad(source.getSeconds())
+  ].join('');
+}
+
+function buildDefaultCampaignFolderName(config, snapshotInfo, now) {
+  const timestampPart = formatCampaignTimestamp(now || new Date());
+  const batchLabelPart = sanitizeCampaignPathComponent(config.campaignBatchLabel, 'campaign');
+  const snapshotSha = snapshotInfo && snapshotInfo.file && typeof snapshotInfo.file.fileSha256 === 'string'
+    ? snapshotInfo.file.fileSha256.slice(0, 8)
+    : 'snapshot';
+
+  return `${timestampPart}__batch-${batchLabelPart}__snap-${snapshotSha}`;
+}
+
+function ensureCampaignDirResolved(config, snapshotInfo) {
+  if (!config || config.mode !== 'CAMPAIGN' || config.campaignDir) {
+    return config;
+  }
+
+  config.campaignDir = path.join(
+    config.outputRootDir,
+    buildDefaultCampaignFolderName(config, snapshotInfo, new Date())
+  );
+
+  return config;
+}
+
 function loadExecutionModules(options) {
   const source = options || {};
   const includeDriveModules = !!source.includeDriveModules;
@@ -937,6 +988,7 @@ async function main() {
   });
 
   const snapshotInfo = loadSnapshotFile(config.snapshotPath);
+  ensureCampaignDirResolved(config, snapshotInfo);
   let dryRunSummary;
   let loadResult;
   let finalSummary;

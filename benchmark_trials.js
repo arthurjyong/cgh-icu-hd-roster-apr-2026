@@ -15,7 +15,7 @@ function getBenchmarkTrialsHeader_() {
     "SnapshotFileSha256",
     "TrialCount",
     "RepeatIndex",
-    "RunId",
+    "RunId", // Globally unique for new campaign runs; legacy rows may still contain pre-Phase-2 values.
     "Ok",
     "BestScore",
     "BestTrialIndex",
