@@ -1411,6 +1411,10 @@ function trimmedStringOrBlank_(value) {
   return String(value === null || value === undefined ? "" : value).trim();
 }
 
+function normalizeBenchmarkTrialsRunIdForCompare_(value) {
+  return trimmedStringOrBlank_(value).toLowerCase();
+}
+
 function numericValueOrNull_(value) {
   return isFiniteNumberValue_(value) ? Number(value) : null;
 }
@@ -1449,7 +1453,7 @@ function buildBenchmarkTrialsWritebackCandidates_(rowObjects) {
     candidate.BestScore = bestScore;
     candidate.TrialCountNumber = numericValueOrNull_(row.TrialCount);
     candidate.RepeatIndexNumber = numericValueOrNull_(row.RepeatIndex);
-    candidate.RunIdNormalized = trimmedStringOrBlank_(row.RunId);
+    candidate.RunIdNormalized = normalizeBenchmarkTrialsRunIdForCompare_(row.RunId);
     candidate.InvocationModeNormalized = trimmedStringOrBlank_(row.InvocationMode);
 
     candidates.push(candidate);
@@ -1616,6 +1620,17 @@ function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportR
   const transportBestTrial = transportResult && transportResult.bestTrial ? transportResult.bestTrial : {};
   const transportTrialSpec = transportResult && transportResult.trialSpec ? transportResult.trialSpec : {};
   const transportInvocationMode = transportResult ? trimmedStringOrBlank_(transportResult.invocationMode) : "";
+  const rowRunId = trimmedStringOrBlank_(rowObject.RunId);
+  const rowTrialCount = isFiniteNumberValue_(rowObject.TrialCount) ? Number(rowObject.TrialCount) : null;
+  const transportTrialCount = isFiniteNumberValue_(transportTrialSpec.trialCount)
+    ? Number(transportTrialSpec.trialCount)
+    : null;
+  const resolvedArtifactPath =
+    trimmedStringOrBlank_(resolvedArtifact.campaignFolderName) +
+    '/runs/' +
+    trimmedStringOrBlank_(resolvedArtifact.runFolderName) +
+    '/' +
+    trimmedStringOrBlank_(resolvedArtifact.artifactFileName);
 
   if (trimmedStringOrBlank_(rowObject.RunFolderName) !== trimmedStringOrBlank_(resolvedArtifact.runFolderName)) {
     issues.push("Selected BENCHMARK_TRIALS RunFolderName does not match resolved Drive run folder.");
@@ -1625,9 +1640,15 @@ function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportR
     issues.push("Selected BENCHMARK_TRIALS ArtifactFileName does not match resolved Drive artifact file.");
   }
 
-  if (isFiniteNumberValue_(rowObject.TrialCount) && isFiniteNumberValue_(transportTrialSpec.trialCount)) {
-    if (Number(rowObject.TrialCount) !== Number(transportTrialSpec.trialCount)) {
-      issues.push("Selected BENCHMARK_TRIALS TrialCount does not match transport trialSpec.trialCount.");
+  if (rowTrialCount !== null && transportTrialCount !== null) {
+    if (rowTrialCount !== transportTrialCount) {
+      issues.push(
+        'Selected BENCHMARK_TRIALS TrialCount does not match transport trialSpec.trialCount. ' +
+        'RunId="' + rowRunId + '", row TrialCount=' + rowTrialCount +
+        ', artifact trialSpec.trialCount=' + transportTrialCount +
+        ', artifact="' + resolvedArtifactPath + '". ' +
+        'This usually indicates stale Drive artifacts or a report/artifact provenance mismatch, not a sheet writeback bug.'
+      );
     }
   }
 
@@ -1772,7 +1793,7 @@ function selectBenchmarkTrialsRunIdForWriteback_(runId) {
   const requestedRunId = normalizeBenchmarkTrialsRunIdOrThrow_(runId);
   const trialsData = readBenchmarkTrialsRowsAsObjects_();
   const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
-  const requestedRunIdLower = requestedRunId.toLowerCase();
+  const requestedRunIdLower = normalizeBenchmarkTrialsRunIdForCompare_(requestedRunId);
 
   const matches = candidates.filter(function(candidate) {
     return candidate.RunIdNormalized === requestedRunIdLower;
