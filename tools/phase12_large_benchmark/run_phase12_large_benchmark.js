@@ -222,6 +222,30 @@ function getBestTrialScoringSummary(transportResult) {
   return scoringSummary;
 }
 
+function getBestTrialComponentScores(transportResult) {
+  const scoringSummary = getBestTrialScoringSummary(transportResult);
+  const componentScores = scoringSummary && scoringSummary.componentScores
+    ? scoringSummary.componentScores
+    : null;
+
+  if (!componentScores || typeof componentScores !== 'object' || Array.isArray(componentScores)) {
+    return null;
+  }
+
+  const result = {};
+  let hasAny = false;
+
+  Object.keys(componentScores).forEach((key) => {
+    const value = componentScores[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      result[key] = value;
+      hasAny = true;
+    }
+  });
+
+  return hasAny ? result : null;
+}
+
 function summarizeWinnerRecordForOutput(record) {
   if (!record) {
     return null;
@@ -230,6 +254,7 @@ function summarizeWinnerRecordForOutput(record) {
   const transportSummary = record.transportSummary || null;
   const transportResult = record.transportResult || null;
   const scoringSummary = getBestTrialScoringSummary(transportResult);
+  const componentScores = getBestTrialComponentScores(transportResult);
 
   const meanPoints = scoringSummary && typeof scoringSummary.meanPoints === 'number'
     ? scoringSummary.meanPoints
@@ -257,7 +282,8 @@ function summarizeWinnerRecordForOutput(record) {
     meanPoints,
     standardDeviation,
     range,
-    totalScore
+    totalScore,
+    componentScores
   };
 }
 
@@ -634,7 +660,10 @@ function buildCampaignRunRecord(runSpec, runConfig, snapshotInfo, runSummary, ru
       meanPoints: typeof globalBest.meanPoints === 'number' ? globalBest.meanPoints : null,
       standardDeviation: typeof globalBest.standardDeviation === 'number' ? globalBest.standardDeviation : null,
       range: typeof globalBest.range === 'number' ? globalBest.range : null,
-      totalScore: typeof globalBest.totalScore === 'number' ? globalBest.totalScore : null
+      totalScore: typeof globalBest.totalScore === 'number' ? globalBest.totalScore : null,
+      componentScores: globalBest.componentScores && typeof globalBest.componentScores === 'object'
+        ? JSON.parse(JSON.stringify(globalBest.componentScores))
+        : null
     } : null,
     summaryMessage: runSummary && runSummary.message ? runSummary.message : null,
     failureMessage: failureRecord && failureRecord.message
