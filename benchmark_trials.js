@@ -114,9 +114,18 @@ function getPhase2BenchmarkTrialsHeader_() {
 
 function getBenchmarkSummaryHeader_() {
   return [
+    "ComparisonGroupKey",
+    "ComparisonStatus",
+    "ComparisonStatusReason",
     "BatchLabel",
     "TrialCount",
     "RunCount",
+    "CampaignCount",
+    "SnapshotLabel",
+    "SnapshotFileSha256",
+    "ScorerFingerprint",
+    "ScorerFingerprintShort",
+    "ScorerFingerprintVersion",
     "MinBestScore",
     "P25BestScore",
     "MedianBestScore",
@@ -451,69 +460,189 @@ function computeStandardDeviation_(values) {
   return Math.sqrt(sumSquaredDeviation / values.length);
 }
 
-function buildBenchmarkSummaryRows_() {
-  const trialsSheet = ensureBenchmarkTrialsSheet_();
-  const lastRow = trialsSheet.getLastRow();
+function normalizeBenchmarkSummaryString_(value) {
+  return String(value === null || value === undefined ? "" : value).trim();
+}
 
-  if (lastRow < 2) {
-    return [];
+function getBenchmarkSummaryStatusSortRank_(status) {
+  const normalized = normalizeBenchmarkSummaryString_(status);
+  if (normalized === "STRICT") {
+    return 0;
+  }
+  if (normalized === "INCOMPLETE_METADATA_SINGLETON") {
+    return 1;
+  }
+  return 2;
+}
+
+function buildBenchmarkSummaryRowIdentity_(rowObject, rowIndex) {
+  const row = rowObject || {};
+  const snapshotFileSha256 = normalizeBenchmarkSummaryString_(row.SnapshotFileSha256);
+  const scorerFingerprint = normalizeBenchmarkSummaryString_(row.ScorerFingerprint);
+  const runId = normalizeBenchmarkSummaryString_(row.RunId);
+  const rowNumber = row && row._rowNumber ? Number(row._rowNumber) : Number(rowIndex) + 2;
+  const missingFields = [];
+
+  if (!snapshotFileSha256) {
+    missingFields.push("SnapshotFileSha256");
   }
 
-  const data = trialsSheet.getRange(2, 1, lastRow - 1, getBenchmarkTrialsHeader_().length).getValues();
-  const groups = {};
-  const col = getBenchmarkTrialsColumnMap_();
+  if (!scorerFingerprint) {
+    missingFields.push("ScorerFingerprint");
+  }
 
-  for (let i = 0; i < data.length; i++) {
-    const row = data[i];
-    const batchLabel = row[col.CampaignBatchLabel];
-    const trialCount = row[col.TrialCount];
-    const ok = row[col.Ok];
-    const bestScore = row[col.BestScore];
-    const runtimeSec = row[col.RuntimeSec];
+  const isComparable = missingFields.length === 0;
+  const baseKey = isComparable
+    ? "snapshot:" + snapshotFileSha256 + "|scorer:" + scorerFingerprint
+    : "singleton:" + (runId || "row-" + rowNumber);
+
+  return {
+    comparisonGroupKey: "cg:v1|" + baseKey,
+    comparisonStatus: isComparable ? "STRICT" : "INCOMPLETE_METADATA_SINGLETON",
+    comparisonStatusReason: isComparable
+      ? "Comparable only within identical SnapshotFileSha256 + ScorerFingerprint."
+      : "Missing required comparison metadata: " + missingFields.join(", ") + ". Row isolated to avoid misleading aggregation.",
+    snapshotFileSha256: snapshotFileSha256,
+    scorerFingerprint: scorerFingerprint,
+    rowNumber: rowNumber
+  };
+}
+
+function buildBenchmarkSummaryGroupsFromTrialRowObjects_(rowObjects) {
+  const groups = {};
+  const rows = Array.isArray(rowObjects) ? rowObjects : [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || {};
+    const ok = row.Ok;
+    const bestScore = row.BestScore;
+    const runtimeSec = row.RuntimeSec;
 
     if (!ok || typeof bestScore !== "number") {
       continue;
     }
 
-    const key = String(batchLabel) + "||" + String(trialCount);
-    if (!groups[key]) {
-      groups[key] = {
-        batchLabel: batchLabel,
+    const identity = buildBenchmarkSummaryRowIdentity_(row, i);
+    const trialCount = row.TrialCount;
+    const groupKey = identity.comparisonGroupKey + "|trialCount:" + String(trialCount);
+
+    if (!groups[groupKey]) {
+      groups[groupKey] = {
+        comparisonGroupKey: identity.comparisonGroupKey,
+        comparisonStatus: identity.comparisonStatus,
+        comparisonStatusReason: identity.comparisonStatusReason,
+        batchLabels: {},
         trialCount: trialCount,
+        snapshotLabels: {},
+        snapshotFileSha256: identity.snapshotFileSha256,
+        scorerFingerprint: identity.scorerFingerprint,
+        scorerFingerprintShort: normalizeBenchmarkSummaryString_(row.ScorerFingerprintShort),
+        scorerFingerprintVersion: normalizeBenchmarkSummaryString_(row.ScorerFingerprintVersion),
         scores: [],
-        runtimes: []
+        runtimes: [],
+        campaignFolderNames: {}
       };
     }
 
-    groups[key].scores.push(bestScore);
+    groups[groupKey].scores.push(bestScore);
+
     if (typeof runtimeSec === "number") {
-      groups[key].runtimes.push(runtimeSec);
+      groups[groupKey].runtimes.push(runtimeSec);
+    }
+
+    const campaignFolderName = normalizeBenchmarkSummaryString_(row.CampaignFolderName);
+    if (campaignFolderName) {
+      groups[groupKey].campaignFolderNames[campaignFolderName] = true;
+    }
+
+    const batchLabel = normalizeBenchmarkSummaryString_(row.CampaignBatchLabel);
+    if (batchLabel) {
+      groups[groupKey].batchLabels[batchLabel] = true;
+    }
+
+    const snapshotLabel = normalizeBenchmarkSummaryString_(row.SnapshotLabel);
+    if (snapshotLabel) {
+      groups[groupKey].snapshotLabels[snapshotLabel] = true;
     }
   }
 
+  return groups;
+}
+
+function compareBenchmarkSummaryGroups_(left, right) {
+  const leftGroup = left || {};
+  const rightGroup = right || {};
+
+  const leftStatus = normalizeBenchmarkSummaryString_(leftGroup.comparisonStatus);
+  const rightStatus = normalizeBenchmarkSummaryString_(rightGroup.comparisonStatus);
+  const leftStatusRank = getBenchmarkSummaryStatusSortRank_(leftStatus);
+  const rightStatusRank = getBenchmarkSummaryStatusSortRank_(rightStatus);
+  if (leftStatusRank !== rightStatusRank) {
+    return leftStatusRank - rightStatusRank;
+  }
+  if (leftStatus !== rightStatus) {
+    return leftStatus.localeCompare(rightStatus);
+  }
+
+  const leftSnapshot = normalizeBenchmarkSummaryString_(leftGroup.snapshotFileSha256);
+  const rightSnapshot = normalizeBenchmarkSummaryString_(rightGroup.snapshotFileSha256);
+  if (leftSnapshot !== rightSnapshot) {
+    return leftSnapshot.localeCompare(rightSnapshot);
+  }
+
+  const leftScorer = normalizeBenchmarkSummaryString_(leftGroup.scorerFingerprint);
+  const rightScorer = normalizeBenchmarkSummaryString_(rightGroup.scorerFingerprint);
+  if (leftScorer !== rightScorer) {
+    return leftScorer.localeCompare(rightScorer);
+  }
+
+  const leftBatch = normalizeBenchmarkSummaryString_(Object.keys(leftGroup.batchLabels || {}).sort()[0]);
+  const rightBatch = normalizeBenchmarkSummaryString_(Object.keys(rightGroup.batchLabels || {}).sort()[0]);
+  if (leftBatch !== rightBatch) {
+    return leftBatch.localeCompare(rightBatch);
+  }
+
+  const leftTrialCount = typeof leftGroup.trialCount === "number" ? leftGroup.trialCount : Number(leftGroup.trialCount);
+  const rightTrialCount = typeof rightGroup.trialCount === "number" ? rightGroup.trialCount : Number(rightGroup.trialCount);
+  if (leftTrialCount !== rightTrialCount) {
+    return leftTrialCount - rightTrialCount;
+  }
+
+  return normalizeBenchmarkSummaryString_(leftGroup.comparisonGroupKey)
+    .localeCompare(normalizeBenchmarkSummaryString_(rightGroup.comparisonGroupKey));
+}
+
+function buildBenchmarkSummaryRowsFromTrialRowObjects_(rowObjects) {
+  const groups = buildBenchmarkSummaryGroupsFromTrialRowObjects_(rowObjects);
   const keys = Object.keys(groups);
+
   keys.sort(function(a, b) {
-    const aGroup = groups[a];
-    const bGroup = groups[b];
-
-    if (aGroup.batchLabel !== bGroup.batchLabel) {
-      return String(aGroup.batchLabel).localeCompare(String(bGroup.batchLabel));
-    }
-
-    return Number(aGroup.trialCount) - Number(bGroup.trialCount);
+    return compareBenchmarkSummaryGroups_(groups[a], groups[b]);
   });
 
-  const summaryRows = [];
-
-  for (let i = 0; i < keys.length; i++) {
-    const group = groups[keys[i]];
+  return keys.map(function(key) {
+    const group = groups[key];
     const sortedScores = sortNumberListAscending_(group.scores);
     const sortedRuntimes = sortNumberListAscending_(group.runtimes);
+    const batchLabels = Object.keys(group.batchLabels);
+    const snapshotLabels = Object.keys(group.snapshotLabels);
 
-    summaryRows.push([
+    group.batchLabel = batchLabels.length <= 1 ? (batchLabels[0] || "") : "(multiple)";
+    group.snapshotLabel = snapshotLabels.length <= 1 ? (snapshotLabels[0] || "") : "(multiple)";
+
+    return [
+      group.comparisonGroupKey,
+      group.comparisonStatus,
+      group.comparisonStatusReason,
       group.batchLabel,
       group.trialCount,
       group.scores.length,
+      Object.keys(group.campaignFolderNames).length,
+      group.snapshotLabel,
+      group.snapshotFileSha256,
+      group.scorerFingerprint,
+      group.scorerFingerprintShort,
+      group.scorerFingerprintVersion,
       sortedScores.length ? sortedScores[0] : "",
       computePercentile_(sortedScores, 0.25),
       computeMedian_(sortedScores),
@@ -524,10 +653,36 @@ function buildBenchmarkSummaryRows_() {
       computeAverage_(sortedRuntimes),
       sortedRuntimes.length ? sortedRuntimes[0] : "",
       sortedRuntimes.length ? sortedRuntimes[sortedRuntimes.length - 1] : ""
-    ]);
+    ];
+  });
+}
+
+function buildBenchmarkSummaryRows_() {
+  const trialsSheet = ensureBenchmarkTrialsSheet_();
+  const lastRow = trialsSheet.getLastRow();
+
+  if (lastRow < 2) {
+    return [];
   }
 
-  return summaryRows;
+  const header = getBenchmarkTrialsHeader_();
+  const data = trialsSheet.getRange(2, 1, lastRow - 1, header.length).getValues();
+  const rowObjects = [];
+
+  for (let i = 0; i < data.length; i++) {
+    const sourceRow = data[i];
+    const rowObject = {
+      _rowNumber: i + 2
+    };
+
+    for (let j = 0; j < header.length; j++) {
+      rowObject[header[j]] = sourceRow[j];
+    }
+
+    rowObjects.push(rowObject);
+  }
+
+  return buildBenchmarkSummaryRowsFromTrialRowObjects_(rowObjects);
 }
 
 function refreshBenchmarkSummarySheet() {
