@@ -236,14 +236,15 @@ function readScorerConfigSheet_() {
   }
 
   const startRow = getScorerConfigDataStartRow_();
-  const lastRow = sheet.getLastRow();
   const headerRow = getScorerConfigHeaderRow_();
   const columnCount = headerRow.length;
+  const definitions = getScorerConfigDefinitions_();
+  const rowCount = definitions.length;
   const entries = [];
   const issues = [];
   const rowNumberByKey = {};
 
-  if (lastRow < startRow) {
+  if (rowCount <= 0) {
     return {
       ok: true,
       exists: true,
@@ -253,7 +254,6 @@ function readScorerConfigSheet_() {
     };
   }
 
-  const rowCount = lastRow - startRow + 1;
   const values = sheet.getRange(startRow, 1, rowCount, columnCount).getValues();
 
   for (let i = 0; i < values.length; i++) {
@@ -393,13 +393,12 @@ function buildResolvedScorerWeights_() {
 function extractExistingScorerConfigValueMap_(sheet) {
   const valueMap = {};
   const startRow = getScorerConfigDataStartRow_();
-  const lastRow = sheet.getLastRow();
+  const rowCount = getScorerConfigDefinitions_().length;
 
-  if (lastRow < startRow) {
+  if (rowCount <= 0) {
     return valueMap;
   }
 
-  const rowCount = lastRow - startRow + 1;
   const values = sheet.getRange(startRow, 1, rowCount, 2).getValues();
 
   for (let i = 0; i < values.length; i++) {
