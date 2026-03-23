@@ -1189,9 +1189,13 @@ function writeBenchmarkCampaignRowsToTrialsSheet_(rows, options) {
   let summaryWriteResult = null;
   if (settings.refreshSummarySheet !== false) {
     refreshBenchmarkSummarySheet();
+    refreshBenchmarkReviewSheet();
     summaryWriteResult = {
       ok: true,
-      sheetName: getBenchmarkSummarySheetName_()
+      sheetNames: [
+        getBenchmarkSummarySheetName_(),
+        getBenchmarkReviewSheetName_()
+      ]
     };
   }
 

@@ -6,6 +6,10 @@ function getBenchmarkSummarySheetName_() {
   return "BENCHMARK_SUMMARY";
 }
 
+function getBenchmarkReviewSheetName_() {
+  return "BENCHMARK_REVIEW";
+}
+
 function getBenchmarkTrialsHeader_() {
   return [
     "ImportTimestamp",
@@ -139,6 +143,46 @@ function getBenchmarkSummaryHeader_() {
   ];
 }
 
+function getBenchmarkReviewHeader_() {
+  return [
+    "ImportTimestamp",
+    "CampaignBatchLabel",
+    "TrialCount",
+    "RepeatIndex",
+    "RunId",
+    "RunIdStatus",
+    "BestScore",
+    "TotalScore",
+    "MeanPoints",
+    "StandardDeviation",
+    "Range",
+    "PointBalanceGlobal",
+    "PointBalanceWithinSection",
+    "SpacingPenalty",
+    "CrReward",
+    "DualEligibleIcuBonus",
+    "StandbyAdjacencyPenalty",
+    "StandbyCountFairnessPenalty",
+    "PreLeavePenalty",
+    "UnfilledPenalty",
+    "RuntimeSec",
+    "SummaryMessage",
+    "FailureMessage",
+    "SnapshotLabel",
+    "SnapshotFileSha256",
+    "Ok",
+    "InvocationMode",
+    "Seed",
+    "CampaignFolderName",
+    "RunFolderName",
+    "ArtifactFileName",
+    "ScorerFingerprint",
+    "ScorerFingerprintShort",
+    "ScorerFingerprintVersion",
+    "ScorerSource"
+  ];
+}
+
 function getBenchmarkTrialsColumnMap_() {
   const header = getBenchmarkTrialsHeader_();
   const columnMap = {};
@@ -224,6 +268,10 @@ function ensureBenchmarkTrialsSheet_() {
 
 function ensureBenchmarkSummarySheet_() {
   return ensureBenchmarkSheet_(getBenchmarkSummarySheetName_(), getBenchmarkSummaryHeader_());
+}
+
+function ensureBenchmarkReviewSheet_() {
+  return ensureBenchmarkSheet_(getBenchmarkReviewSheetName_(), getBenchmarkReviewHeader_());
 }
 
 
@@ -315,21 +363,27 @@ function migrateLegacyBenchmarkTrialsSheetForAppend_(sheet) {
 function resetBenchmarkSheets() {
   const trialsSheet = ensureBenchmarkTrialsSheet_();
   const summarySheet = ensureBenchmarkSummarySheet_();
+  const reviewSheet = ensureBenchmarkReviewSheet_();
 
   trialsSheet.clearContents();
   summarySheet.clearContents();
+  reviewSheet.clearContents();
 
   const trialsHeader = getBenchmarkTrialsHeader_();
   const summaryHeader = getBenchmarkSummaryHeader_();
+  const reviewHeader = getBenchmarkReviewHeader_();
 
   trialsSheet.getRange(1, 1, 1, trialsHeader.length).setValues([trialsHeader]);
   summarySheet.getRange(1, 1, 1, summaryHeader.length).setValues([summaryHeader]);
+  reviewSheet.getRange(1, 1, 1, reviewHeader.length).setValues([reviewHeader]);
 
   trialsSheet.setFrozenRows(1);
   summarySheet.setFrozenRows(1);
+  reviewSheet.setFrozenRows(1);
 
   trialsSheet.getRange(1, 1, 1, trialsHeader.length).setFontWeight("bold");
   summarySheet.getRange(1, 1, 1, summaryHeader.length).setFontWeight("bold");
+  reviewSheet.getRange(1, 1, 1, reviewHeader.length).setFontWeight("bold");
 
   Logger.log("Benchmark sheets reset.");
 }
@@ -726,6 +780,43 @@ function buildBenchmarkSummaryRows_() {
   return buildBenchmarkSummaryRowsFromTrialRowObjects_(rowObjects);
 }
 
+function isGlobalCampaignRunId_(runId) {
+  return /^cmp_/i.test(normalizeBenchmarkSummaryString_(runId));
+}
+
+function getBenchmarkRunIdStatus_(runId) {
+  return isGlobalCampaignRunId_(runId) ? "GLOBAL_CAMPAIGN_ID" : "LEGACY_NON_GLOBAL";
+}
+
+function buildBenchmarkReviewRows_() {
+  const trialsSheet = ensureBenchmarkTrialsSheet_();
+  const trialsHeader = getBenchmarkTrialsHeader_();
+  const reviewHeader = getBenchmarkReviewHeader_();
+  const lastRow = trialsSheet.getLastRow();
+
+  if (lastRow < 2) {
+    return [];
+  }
+
+  const trialValues = trialsSheet.getRange(2, 1, lastRow - 1, trialsHeader.length).getValues();
+
+  return trialValues.map(function(sourceRow) {
+    const rowObject = {};
+
+    for (let i = 0; i < trialsHeader.length; i++) {
+      rowObject[trialsHeader[i]] = sourceRow[i];
+    }
+
+    rowObject.RunIdStatus = getBenchmarkRunIdStatus_(rowObject.RunId);
+
+    return reviewHeader.map(function(columnName) {
+      return Object.prototype.hasOwnProperty.call(rowObject, columnName)
+        ? rowObject[columnName]
+        : "";
+    });
+  });
+}
+
 function refreshBenchmarkSummarySheet() {
   const summarySheet = ensureBenchmarkSummarySheet_();
   const header = getBenchmarkSummaryHeader_();
@@ -744,6 +835,27 @@ function refreshBenchmarkSummarySheet() {
     ok: true,
     summaryRowCount: rows.length,
     sheetName: getBenchmarkSummarySheetName_()
+  }, null, 2));
+}
+
+function refreshBenchmarkReviewSheet() {
+  const reviewSheet = ensureBenchmarkReviewSheet_();
+  const header = getBenchmarkReviewHeader_();
+  const rows = buildBenchmarkReviewRows_();
+
+  reviewSheet.clearContents();
+  reviewSheet.getRange(1, 1, 1, header.length).setValues([header]);
+  reviewSheet.setFrozenRows(1);
+  reviewSheet.getRange(1, 1, 1, header.length).setFontWeight("bold");
+
+  if (rows.length > 0) {
+    reviewSheet.getRange(2, 1, rows.length, header.length).setValues(rows);
+  }
+
+  Logger.log(JSON.stringify({
+    ok: true,
+    reviewRowCount: rows.length,
+    sheetName: getBenchmarkReviewSheetName_()
   }, null, 2));
 }
 
@@ -782,6 +894,7 @@ function benchmarkTrialCounts_(trialCounts, repeats, batchLabel) {
 
     // Refresh summary after each trial-count block, not only at the very end.
     refreshBenchmarkSummarySheet();
+    refreshBenchmarkReviewSheet();
   }
 
   Logger.log(JSON.stringify({
