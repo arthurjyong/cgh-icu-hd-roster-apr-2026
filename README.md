@@ -43,6 +43,7 @@ Current state:
 - campaign `RunId` generation is now globally unique for new runs and specific-`RunId` writeback is supported from the UI
 - scorer fingerprint metadata is now captured in campaign artifacts, imported raw rows, and benchmark summaries
 - benchmark summary rows now isolate incomparable runs by comparison group instead of mixing them into one batch-level rollup
+- Phase 6 scoped default benchmark writeback UX is now implemented via an explicit control-panel `ComparisonGroupKey` selector
 
 The system is usable in Google Sheets today.
 
@@ -386,6 +387,20 @@ Current operational note:
 - `BENCHMARK_REVIEW` remains a review surface for humans, not the canonical selector for writeback
 - Phase 5 leaves a small scope-selection seam in the default selector so Phase 6 can later add explicit comparison-group or snapshot+scorer scoping without reworking the writeback pipeline
 
+### Phase 6 — optional advanced UX for scoped default writeback
+
+Completed:
+- the existing Phase 5 scope-resolution seam is now wired to an operator-visible control in `SCORER_CONFIG`
+- default winner writeback can now use an explicit `ComparisonGroupKey` copied from `BENCHMARK_SUMMARY` column A
+- default writeback still reads canonical raw rows from `BENCHMARK_TRIALS` and still validates the linked Drive artifact plus `run_manifest.json` before writing to `Sheet1`
+- specific-`RunId` inspection/writeback remains available and does not depend on the new scope control
+- if multiple valid comparison groups exist and no scoped key is selected, automatic writeback remains blocked
+- if the saved scoped key is stale, missing, or resolves to a non-`STRICT` group, automatic writeback blocks with recovery guidance instead of guessing
+
+Operational note:
+- `BENCHMARK_SUMMARY` remains the human-visible source for comparison grouping and `ComparisonGroupKey` discovery
+- `BENCHMARK_REVIEW` remains review-oriented and was not redesigned for this phase
+
 ## Project structure
 
 Current source files are organized roughly as follows:
@@ -645,7 +660,8 @@ Current intended large-run workflow:
 5. in Apps Script, inspect latest or selected benchmark artifacts
 6. import raw campaign runs into `BENCHMARK_TRIALS`
 7. review grouped results in `BENCHMARK_SUMMARY`
-8. write imported best benchmark winner back to `Sheet1` rows 35–38 when desired
+8. if multiple comparison groups exist, copy the desired `ComparisonGroupKey` from `BENCHMARK_SUMMARY` into the `SCORER_CONFIG` default-writeback scope control
+9. write the imported best benchmark winner back to `Sheet1` rows 35–38 when desired
 
 This preserves Google Sheets + Apps Script as the live operational front end while allowing much larger search volumes outside Apps Script runtime limits.
 

@@ -2,6 +2,7 @@ function getBenchmarkUiConfig_() {
   return {
     sheetName: 'SCORER_CONFIG',
     specificRunIdPlaceholder: '<insert_RunID>',
+    defaultWritebackComparisonGroupKeyPlaceholder: '<auto_if_single_group>',
     namedRanges: {
       targetMaxTrialCount: 'BENCHMARK_UI_TARGET_MAX_TRIAL_COUNT',
       seedOverride: 'BENCHMARK_UI_SEED_OVERRIDE',
@@ -13,6 +14,7 @@ function getBenchmarkUiConfig_() {
       bestScore: 'BENCHMARK_UI_BEST_SCORE',
       lastUpdated: 'BENCHMARK_UI_LAST_UPDATED',
       specificRunId: 'BENCHMARK_UI_SPECIFIC_RUN_ID',
+      defaultWritebackComparisonGroupKey: 'BENCHMARK_UI_DEFAULT_WRITEBACK_COMPARISON_GROUP_KEY',
       campaignSeed: 'BENCHMARK_UI_CAMPAIGN_SEED'
     },
     fallbackCells: {
@@ -26,6 +28,7 @@ function getBenchmarkUiConfig_() {
       bestScore: 'O9',
       lastUpdated: 'O10',
       specificRunId: 'O12',
+      defaultWritebackComparisonGroupKey: 'O11',
       campaignSeed: 'O13'
     },
     allowedTargetMaxTrialCounts: [
@@ -73,6 +76,7 @@ function getBenchmarkUiNamedRangeTargetA1Map_() {
   return {
     targetMaxTrialCount: 'B18',
     seedOverride: 'B19',
+    defaultWritebackComparisonGroupKey: 'C22',
     specificRunId: 'C23',
     status: 'B26',
     campaignFolder: 'B27',
@@ -231,6 +235,12 @@ function readBenchmarkUiSpecificRunId_() {
   return normalized === getBenchmarkUiConfig_().specificRunIdPlaceholder ? '' : normalized;
 }
 
+function readBenchmarkUiDefaultWritebackComparisonGroupKey_() {
+  const control = resolveBenchmarkUiControlRange_('defaultWritebackComparisonGroupKey');
+  const normalized = normalizeBenchmarkUiString_(control.getValue());
+  return normalized === getBenchmarkUiConfig_().defaultWritebackComparisonGroupKeyPlaceholder ? '' : normalized;
+}
+
 function readBenchmarkUiSeedOverride_() {
   const control = resolveBenchmarkUiControlRange_('seedOverride');
   return normalizeBenchmarkUiString_(control.getValue());
@@ -242,6 +252,7 @@ function readBenchmarkUiControlState_() {
     targetMaxTrialCount: targetMaxTrialCount,
     expandedTrialCounts: buildBenchmarkTrialCountsUpToTarget_(targetMaxTrialCount),
     specificRunId: readBenchmarkUiSpecificRunId_(),
+    defaultWritebackComparisonGroupKey: readBenchmarkUiDefaultWritebackComparisonGroupKey_(),
     seedOverride: readBenchmarkUiSeedOverride_()
   };
 }
@@ -311,6 +322,18 @@ function clearBenchmarkUiCampaignProgress_() {
   writeBenchmarkUiStatus_(getBenchmarkUiConfig_().defaultStatus);
 }
 
+function ensureBenchmarkUiTextControlPlaceholder_(controlKey, placeholder) {
+  const range = resolveBenchmarkUiControlRange_(controlKey);
+  range.setNumberFormat('@');
+  range.setWrap(true);
+
+  if (!normalizeBenchmarkUiString_(range.getValue())) {
+    range.setValue(placeholder);
+  }
+
+  return range;
+}
+
 function initializeBenchmarkUiControls_() {
   const installResult = installBenchmarkUiNamedRanges_();
   const allowed = getBenchmarkUiAllowedTargetMaxTrialCounts_();
@@ -337,12 +360,14 @@ function initializeBenchmarkUiControls_() {
   bestRunIdRange.setNumberFormat('@');
   bestRunIdRange.setWrap(true);
 
-  const specificRunIdRange = resolveBenchmarkUiControlRange_('specificRunId');
-  specificRunIdRange.setNumberFormat('@');
-  specificRunIdRange.setWrap(true);
-  if (!normalizeBenchmarkUiString_(specificRunIdRange.getValue())) {
-    specificRunIdRange.setValue(getBenchmarkUiConfig_().specificRunIdPlaceholder);
-  }
+  const specificRunIdRange = ensureBenchmarkUiTextControlPlaceholder_(
+    'specificRunId',
+    getBenchmarkUiConfig_().specificRunIdPlaceholder
+  );
+  const defaultWritebackComparisonGroupKeyRange = ensureBenchmarkUiTextControlPlaceholder_(
+    'defaultWritebackComparisonGroupKey',
+    getBenchmarkUiConfig_().defaultWritebackComparisonGroupKeyPlaceholder
+  );
 
   const campaignSeedRange = resolveBenchmarkUiControlRange_('campaignSeed');
   campaignSeedRange.setNumberFormat('@');
@@ -356,6 +381,7 @@ function initializeBenchmarkUiControls_() {
     seedOverrideCell: seedOverrideRange.getA1Notation(),
     bestRunIdCell: bestRunIdRange.getA1Notation(),
     specificRunIdCell: specificRunIdRange.getA1Notation(),
+    defaultWritebackComparisonGroupKeyCell: defaultWritebackComparisonGroupKeyRange.getA1Notation(),
     campaignSeedCell: campaignSeedRange.getA1Notation(),
     allowedTargetMaxTrialCounts: allowed,
     installResult: installResult
@@ -385,16 +411,32 @@ function restoreBenchmarkUiPlaceholdersOnEdit_(e) {
     return;
   }
 
-  const specificRunIdRange = resolveBenchmarkUiControlRange_('specificRunId');
-  if (range.getSheet().getSheetId() !== specificRunIdRange.getSheet().getSheetId()) {
-    return;
-  }
-  if (range.getA1Notation() !== specificRunIdRange.getA1Notation()) {
-    return;
-  }
+  const config = getBenchmarkUiConfig_();
+  const placeholderControls = [
+    {
+      controlKey: 'specificRunId',
+      placeholder: config.specificRunIdPlaceholder
+    },
+    {
+      controlKey: 'defaultWritebackComparisonGroupKey',
+      placeholder: config.defaultWritebackComparisonGroupKeyPlaceholder
+    }
+  ];
 
-  if (!normalizeBenchmarkUiString_(range.getValue())) {
-    range.setValue(getBenchmarkUiConfig_().specificRunIdPlaceholder);
+  for (let i = 0; i < placeholderControls.length; i++) {
+    const control = placeholderControls[i];
+    const controlRange = resolveBenchmarkUiControlRange_(control.controlKey);
+    if (range.getSheet().getSheetId() !== controlRange.getSheet().getSheetId()) {
+      continue;
+    }
+    if (range.getA1Notation() !== controlRange.getA1Notation()) {
+      continue;
+    }
+
+    if (!normalizeBenchmarkUiString_(range.getValue())) {
+      range.setValue(control.placeholder);
+    }
+    return;
   }
 }
 
