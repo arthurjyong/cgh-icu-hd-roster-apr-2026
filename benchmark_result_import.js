@@ -935,6 +935,10 @@ function isFiniteNumberValue_(value) {
   return typeof value === "number" && isFinite(value);
 }
 
+function isCampaignScopedBenchmarkRunId_(runId) {
+  return /^cmp_/i.test(String(runId || "").trim());
+}
+
 function validateBenchmarkCampaignRun_(run, index) {
   const prefix = "runs[" + index + "]";
 
@@ -949,6 +953,13 @@ function validateBenchmarkCampaignRun_(run, index) {
     return {
       ok: false,
       message: prefix + '.runId is required.'
+    };
+  }
+
+  if (!isCampaignScopedBenchmarkRunId_(run.runId)) {
+    return {
+      ok: false,
+      message: prefix + '.runId must use the campaign-scoped cmp_... format.'
     };
   }
 
@@ -1523,6 +1534,7 @@ function buildBenchmarkTrialsWritebackCandidates_(rowObjects) {
     const runFolderName = trimmedStringOrBlank_(row.RunFolderName);
     const artifactFileName = trimmedStringOrBlank_(row.ArtifactFileName);
     const bestScore = numericValueOrNull_(row.BestScore);
+    const runId = trimmedStringOrBlank_(row.RunId);
 
     if (okValue !== true) {
       continue;
@@ -1531,6 +1543,9 @@ function buildBenchmarkTrialsWritebackCandidates_(rowObjects) {
       continue;
     }
     if (bestScore === null) {
+      continue;
+    }
+    if (!isCampaignScopedBenchmarkRunId_(runId)) {
       continue;
     }
 
@@ -1546,7 +1561,7 @@ function buildBenchmarkTrialsWritebackCandidates_(rowObjects) {
     candidate.BestScore = bestScore;
     candidate.TrialCountNumber = numericValueOrNull_(row.TrialCount);
     candidate.RepeatIndexNumber = numericValueOrNull_(row.RepeatIndex);
-    candidate.RunIdNormalized = normalizeBenchmarkTrialsRunIdForCompare_(row.RunId);
+    candidate.RunIdNormalized = normalizeBenchmarkTrialsRunIdForCompare_(runId);
     candidate.InvocationModeNormalized = trimmedStringOrBlank_(row.InvocationMode);
 
     candidates.push(candidate);

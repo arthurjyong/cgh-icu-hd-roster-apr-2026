@@ -785,7 +785,7 @@ function isGlobalCampaignRunId_(runId) {
 }
 
 function getBenchmarkRunIdStatus_(runId) {
-  return isGlobalCampaignRunId_(runId) ? "GLOBAL_CAMPAIGN_ID" : "LEGACY_NON_GLOBAL";
+  return isGlobalCampaignRunId_(runId) ? "GLOBAL_CAMPAIGN_ID" : "DEPRECATED_LEGACY_ID";
 }
 
 function buildBenchmarkReviewRows_() {
