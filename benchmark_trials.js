@@ -43,6 +43,34 @@ function getBenchmarkTrialsHeader_() {
   ];
 }
 
+function getLegacyBenchmarkTrialsHeader_() {
+  return [
+    "ImportTimestamp",
+    "CampaignBatchLabel",
+    "CampaignFolderName",
+    "SnapshotLabel",
+    "SnapshotFileSha256",
+    "TrialCount",
+    "RepeatIndex",
+    "RunId",
+    "Ok",
+    "BestScore",
+    "BestTrialIndex",
+    "RuntimeMs",
+    "RuntimeSec",
+    "InvocationMode",
+    "Seed",
+    "RunFolderName",
+    "ArtifactFileName",
+    "MeanPoints",
+    "StandardDeviation",
+    "Range",
+    "TotalScore",
+    "SummaryMessage",
+    "FailureMessage"
+  ];
+}
+
 function getBenchmarkSummaryHeader_() {
   return [
     "BatchLabel",
@@ -98,6 +126,31 @@ function buildHeaderIndexMapFromRow_(headerRow) {
   return map;
 }
 
+function headerRowsMatchExactly_(actualHeader, expectedHeader) {
+  const actual = Array.isArray(actualHeader) ? actualHeader : [];
+  const expected = Array.isArray(expectedHeader) ? expectedHeader : [];
+
+  if (actual.length < expected.length) {
+    return false;
+  }
+
+  for (let i = 0; i < expected.length; i++) {
+    const actualValue = String(actual[i] === null || actual[i] === undefined ? "" : actual[i]).trim();
+    if (actualValue !== expected[i]) {
+      return false;
+    }
+  }
+
+  for (let j = expected.length; j < actual.length; j++) {
+    const trailingValue = String(actual[j] === null || actual[j] === undefined ? "" : actual[j]).trim();
+    if (trailingValue) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function ensureBenchmarkSheet_(sheetName, headerRow) {
   const ss = SpreadsheetApp.getActive();
   let sheet = ss.getSheetByName(sheetName);
@@ -139,6 +192,66 @@ function writeBenchmarkSheetHeaderRow_(sheet, headerRow) {
   sheet.getRange(1, 1, 1, headerRow.length).setFontWeight("bold");
 }
 
+function migrateLegacyBenchmarkTrialsSheetForAppend_(sheet) {
+  if (!sheet) {
+    throw new Error("sheet is required.");
+  }
+
+  const expectedHeader = getBenchmarkTrialsHeader_();
+  const legacyHeader = getLegacyBenchmarkTrialsHeader_();
+  const lastRow = sheet.getLastRow();
+  const actualHeader = sheet.getRange(1, 1, 1, expectedHeader.length).getValues()[0];
+
+  if (headerRowsMatchExactly_(actualHeader, expectedHeader)) {
+    return;
+  }
+
+  if (!headerRowsMatchExactly_(actualHeader, legacyHeader)) {
+    throw new Error(
+      "BENCHMARK_TRIALS header does not match the current schema or the supported legacy schema. " +
+      "Run resetBenchmarkSheets() or a REPLACE campaign import before APPEND."
+    );
+  }
+
+  const migratedRows = [];
+  const dataRowCount = Math.max(0, lastRow - 1);
+  const legacyHeaderMap = buildHeaderIndexMapFromRow_(legacyHeader);
+  const addedColumnCount = expectedHeader.length - legacyHeader.length;
+
+  if (dataRowCount > 0) {
+    const addedColumnValues = addedColumnCount > 0
+      ? sheet.getRange(2, legacyHeader.length + 1, dataRowCount, addedColumnCount).getValues()
+      : [];
+
+    for (let rowIndex = 0; rowIndex < addedColumnValues.length; rowIndex++) {
+      for (let columnIndex = 0; columnIndex < addedColumnValues[rowIndex].length; columnIndex++) {
+        const cellValue = addedColumnValues[rowIndex][columnIndex];
+        if (cellValue !== "" && cellValue !== null) {
+          throw new Error(
+            "BENCHMARK_TRIALS contains populated columns beyond the supported legacy header width. " +
+            "Run resetBenchmarkSheets() or a REPLACE campaign import before APPEND."
+          );
+        }
+      }
+    }
+
+    const legacyRows = sheet.getRange(2, 1, dataRowCount, legacyHeader.length).getValues();
+    for (let i = 0; i < legacyRows.length; i++) {
+      const legacyRow = legacyRows[i];
+      migratedRows.push(expectedHeader.map(function(columnName) {
+        const legacyIndex = legacyHeaderMap[columnName];
+        return typeof legacyIndex === "number" ? legacyRow[legacyIndex] : "";
+      }));
+    }
+  }
+
+  writeBenchmarkSheetHeaderRow_(sheet, expectedHeader);
+
+  if (migratedRows.length > 0) {
+    sheet.getRange(2, 1, migratedRows.length, expectedHeader.length).setValues(migratedRows);
+  }
+}
+
 
 function resetBenchmarkSheets() {
   const trialsSheet = ensureBenchmarkTrialsSheet_();
@@ -166,6 +279,7 @@ function appendBenchmarkRows_(rows) {
   if (!rows || rows.length === 0) return;
 
   const sheet = ensureBenchmarkTrialsSheet_();
+  migrateLegacyBenchmarkTrialsSheetForAppend_(sheet);
   const startRow = sheet.getLastRow() + 1;
   const columnCount = getBenchmarkTrialsHeader_().length;
 
