@@ -240,6 +240,7 @@ function applyStatusSummaryToEntry(entry, summary) {
   entry.batchLabel = summary.batchLabel || entry.batchLabel;
   entry.snapshotFileName = summary.snapshotFileName || entry.snapshotFileName;
   entry.snapshotFileSha256 = summary.snapshotFileSha256 || entry.snapshotFileSha256;
+  entry.baseSeed = summary.baseSeed != null ? String(summary.baseSeed) : entry.baseSeed;
   entry.status = summary.status || entry.status;
   entry.plannedRunCount = summary.plannedRunCount != null ? summary.plannedRunCount : entry.plannedRunCount;
   entry.completedRunCount = summary.completedRunCount != null ? summary.completedRunCount : entry.completedRunCount;
@@ -282,6 +283,7 @@ function flattenStatusLikeObject(obj) {
     batchLabel: obj && obj.batchLabel ? obj.batchLabel : null,
     snapshotFileName: obj && obj.snapshotFileName ? obj.snapshotFileName : null,
     snapshotFileSha256: obj && obj.snapshotFileSha256 ? obj.snapshotFileSha256 : null,
+    baseSeed: obj && obj.baseSeed != null ? String(obj.baseSeed) : null,
     status: obj && obj.status ? obj.status : null,
     plannedRunCount: obj && obj.plannedRunCount != null ? obj.plannedRunCount : null,
     completedRunCount: obj && obj.completedRunCount != null ? obj.completedRunCount : null,
@@ -306,6 +308,7 @@ function flattenStartResult(entry) {
     batchLabel: entry.batchLabel,
     snapshotFileName: entry.snapshotFileName,
     snapshotFileSha256: entry.snapshotFileSha256,
+    baseSeed: entry.baseSeed,
     status: entry.status,
     plannedRunCount: entry.plannedRunCount,
     completedRunCount: entry.completedRunCount,
@@ -385,7 +388,7 @@ function validateCampaignStartBody(body) {
     campaignBatchLabel: typeof source.campaignBatchLabel === 'string' && source.campaignBatchLabel.trim()
       ? source.campaignBatchLabel.trim()
       : 'benchmark_campaign',
-    baseSeed: validateOptionalIntegerOrNull(source.baseSeed, 'baseSeed'),
+    baseSeed: validatePositiveInteger(source.baseSeed, 'baseSeed'),
     campaignId: typeof source.campaignId === 'string' && source.campaignId.trim()
       ? source.campaignId.trim()
       : null,
@@ -455,6 +458,7 @@ async function handleCampaignStart(req, res, config) {
     batchLabel: request.campaignBatchLabel,
     snapshotFileName: downloadedSnapshot.fileName,
     snapshotFileSha256: snapshotSha256,
+    baseSeed: request.baseSeed == null ? null : String(request.baseSeed),
     status: 'PENDING',
     plannedRunCount,
     completedRunCount: null,
@@ -504,6 +508,7 @@ async function handleCampaignStart(req, res, config) {
       entry.campaignFolderName = result.campaignFolderName || entry.campaignFolderName;
       entry.completedRunCount = result.completedRunCount != null ? result.completedRunCount : entry.completedRunCount;
       entry.plannedRunCount = result.plannedRunCount != null ? result.plannedRunCount : entry.plannedRunCount;
+      entry.baseSeed = result.baseSeed != null ? String(result.baseSeed) : entry.baseSeed;
       entry.lastUpdated = new Date().toISOString();
       entry.completedAt = entry.lastUpdated;
       if (result.campaignStatusSummary) {

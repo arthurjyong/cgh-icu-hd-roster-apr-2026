@@ -5,7 +5,6 @@ function getBenchmarkOrchestrationDefaults_() {
     artifactFileName: 'benchmark_campaign_report_v1.json',
     pollEveryMinutes: 1,
     repeats: 3,
-    baseSeed: '12345',
     statePrefix: 'BENCHMARK_ORCHESTRATION_',
     activeStatusValues: {
       pending: 'PENDING',
@@ -31,7 +30,8 @@ function getBenchmarkOrchestrationPropertyKeys_() {
     targetMaxTrialCount: prefix + 'TARGET_MAX_TRIAL_COUNT',
     startedAtIso: prefix + 'STARTED_AT_ISO',
     pollTriggerUniqueId: prefix + 'POLL_TRIGGER_UNIQUE_ID',
-    lastPollAtIso: prefix + 'LAST_POLL_AT_ISO'
+    lastPollAtIso: prefix + 'LAST_POLL_AT_ISO',
+    campaignSeed: prefix + 'CAMPAIGN_SEED'
   };
 }
 
@@ -66,7 +66,6 @@ function getBenchmarkOrchestratorConfig_() {
     statusPath: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.statusPath)) || defaults.statusPath,
     pollEveryMinutes: defaults.pollEveryMinutes,
     repeats: defaults.repeats,
-    baseSeed: defaults.baseSeed,
     artifactFileName: defaults.artifactFileName
   };
 
@@ -100,7 +99,8 @@ function getActiveBenchmarkCampaignState_() {
     targetMaxTrialCount: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.targetMaxTrialCount)),
     startedAtIso: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.startedAtIso)),
     pollTriggerUniqueId: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.pollTriggerUniqueId)),
-    lastPollAtIso: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.lastPollAtIso))
+    lastPollAtIso: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.lastPollAtIso)),
+    campaignSeed: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.campaignSeed))
   };
 }
 
@@ -116,6 +116,7 @@ function setActiveBenchmarkCampaignState_(state) {
   values[keys.startedAtIso] = normalizeBenchmarkOrchestrationString_(payload.startedAtIso);
   values[keys.pollTriggerUniqueId] = normalizeBenchmarkOrchestrationString_(payload.pollTriggerUniqueId);
   values[keys.lastPollAtIso] = normalizeBenchmarkOrchestrationString_(payload.lastPollAtIso);
+  values[keys.campaignSeed] = normalizeBenchmarkOrchestrationString_(payload.campaignSeed);
   properties.setProperties(values, false);
 }
 
@@ -129,6 +130,7 @@ function clearActiveBenchmarkCampaignState_() {
   properties.deleteProperty(keys.startedAtIso);
   properties.deleteProperty(keys.pollTriggerUniqueId);
   properties.deleteProperty(keys.lastPollAtIso);
+  properties.deleteProperty(keys.campaignSeed);
 }
 
 function getBenchmarkCampaignPollTriggerFunctionName_() {
@@ -169,12 +171,33 @@ function buildBenchmarkCampaignBatchLabelFromUi_(targetMaxTrialCount) {
   return 'ui_target_' + String(targetMaxTrialCount) + '__' + timestamp;
 }
 
+function generateBenchmarkCampaignSeed_() {
+  const now = Date.now();
+  const randomPart = Math.floor(Math.random() * 1000000);
+  return String(now) + String(randomPart).padStart(6, '0');
+}
+
+function resolveBenchmarkCampaignSeedFromUi_(uiState) {
+  const ui = uiState || readBenchmarkUiControlState_();
+  const seedOverride = normalizeBenchmarkOrchestrationString_(ui.seedOverride);
+  if (seedOverride) {
+    const numeric = Number(seedOverride);
+    if (!Number.isInteger(numeric) || numeric <= 0) {
+      throw new Error('Seed override must be a positive integer.');
+    }
+    return String(numeric);
+  }
+
+  return generateBenchmarkCampaignSeed_();
+}
+
 function buildBenchmarkCampaignStartPayload_(snapshotExportResult, uiState) {
   if (!snapshotExportResult || snapshotExportResult.ok !== true) {
     throw new Error('A successful snapshot export result is required.');
   }
   const ui = uiState || readBenchmarkUiControlState_();
   const exportInfo = snapshotExportResult.export || {};
+  const baseSeed = resolveBenchmarkCampaignSeedFromUi_(ui);
   return {
     mode: 'CAMPAIGN',
     source: 'APPS_SCRIPT_UI',
@@ -184,14 +207,15 @@ function buildBenchmarkCampaignStartPayload_(snapshotExportResult, uiState) {
     targetMaxTrialCount: ui.targetMaxTrialCount,
     campaignTrialCounts: ui.expandedTrialCounts,
     campaignRepeats: getBenchmarkOrchestrationDefaults_().repeats,
-    baseSeed: getBenchmarkOrchestrationDefaults_().baseSeed,
+    baseSeed: baseSeed,
     campaignBatchLabel: buildBenchmarkCampaignBatchLabelFromUi_(ui.targetMaxTrialCount),
     snapshot: {
       contractVersion: snapshotExportResult.contractVersion || null,
       fileId: exportInfo.fileId || null,
       fileName: exportInfo.fileName || null,
       exportedAtIso: exportInfo.exportedAtIso || null
-    }
+    },
+    resolvedBaseSeed: baseSeed
   };
 }
 
@@ -262,7 +286,8 @@ function extractBenchmarkProgressPayload_(statusResponse) {
     completedRunCount: response.completedRunCount,
     plannedRunCount: response.plannedRunCount,
     currentBestRunId: response.currentBestRunId || '',
-    currentBestScore: response.currentBestScore
+    currentBestScore: response.currentBestScore,
+    campaignSeed: response.baseSeed != null ? String(response.baseSeed) : ''
   };
 }
 
@@ -286,7 +311,8 @@ function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
     writeBenchmarkUiCampaignProgress_({
       campaignFolderName: folderName,
       currentBestRunId: bestWinner.runId || '',
-      currentBestScore: bestWinner.bestScore
+      currentBestScore: bestWinner.bestScore,
+      campaignSeed: getActiveBenchmarkCampaignState_().campaignSeed || ''
     });
   }
 
@@ -307,7 +333,8 @@ function buildCompactBenchmarkCampaignStateSummary_(state) {
     targetMaxTrialCount: active.targetMaxTrialCount || '',
     startedAtIso: active.startedAtIso || '',
     pollTriggerUniqueId: active.pollTriggerUniqueId || '',
-    lastPollAtIso: active.lastPollAtIso || ''
+    lastPollAtIso: active.lastPollAtIso || '',
+    campaignSeed: active.campaignSeed || ''
   };
 }
 
@@ -340,7 +367,8 @@ function startBenchmarkCampaignFromUi_() {
     targetMaxTrialCount: String(target),
     startedAtIso: started.startedAt || nowIso,
     pollTriggerUniqueId: '',
-    lastPollAtIso: nowIso
+    lastPollAtIso: nowIso,
+    campaignSeed: started.baseSeed != null ? String(started.baseSeed) : String(payload.baseSeed)
   });
 
   installBenchmarkCampaignPollTrigger_();
@@ -351,8 +379,10 @@ function startBenchmarkCampaignFromUi_() {
     completedRunCount: started.completedRunCount,
     plannedRunCount: started.plannedRunCount,
     currentBestRunId: started.currentBestRunId || '',
-    currentBestScore: started.currentBestScore
+    currentBestScore: started.currentBestScore,
+    baseSeed: started.baseSeed != null ? String(started.baseSeed) : String(payload.baseSeed)
   }));
+  writeBenchmarkUiControlValue_('seedOverride', '');
 
   const compact = {
     ok: true,
@@ -360,6 +390,7 @@ function startBenchmarkCampaignFromUi_() {
     campaignId: started.campaignId || '',
     campaignFolderName: started.campaignFolderName || '',
     plannedRunCount: started.plannedRunCount,
+    baseSeed: started.baseSeed != null ? String(started.baseSeed) : String(payload.baseSeed),
     targetMaxTrialCount: target,
     expandedTrialCounts: uiState.expandedTrialCounts,
     snapshotFileName: snapshotExport.export ? snapshotExport.export.fileName : '',
@@ -385,6 +416,7 @@ function pollActiveBenchmarkCampaign_() {
   const nowIso = new Date().toISOString();
   state.campaignFolderName = normalizeBenchmarkOrchestrationString_(statusResponse.campaignFolderName) || state.campaignFolderName;
   state.status = normalizeBenchmarkOrchestrationString_(statusResponse.status) || state.status;
+  state.campaignSeed = normalizeBenchmarkOrchestrationString_(statusResponse.baseSeed) || state.campaignSeed;
   state.lastPollAtIso = nowIso;
   setActiveBenchmarkCampaignState_(state);
 
