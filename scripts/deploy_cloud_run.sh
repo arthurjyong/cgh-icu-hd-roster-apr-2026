@@ -22,20 +22,21 @@ require_var() {
 }
 
 append_flag_if_set() {
-  local -n _args_ref="$1"
+  local array_name="$1"
   local flag="$2"
   local value="$3"
   if [[ -n "$value" ]]; then
-    _args_ref+=("$flag" "$value")
+    eval "$array_name+=(\"\$flag\")"
+    eval "$array_name+=(\"\$value\")"
   fi
 }
 
 append_set_env_var_if_set() {
-  local -n _pairs_ref="$1"
+  local array_name="$1"
   local name="$2"
   local value="${!name:-}"
   if [[ -n "$value" ]]; then
-    _pairs_ref+=("${name}=${value}")
+    eval "$array_name+=(\"\${name}=\${value}\")"
   fi
 }
 
