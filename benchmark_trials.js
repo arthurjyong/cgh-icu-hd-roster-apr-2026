@@ -573,6 +573,15 @@ function safeNumberFieldFromObjects_(fieldName, firstObject, secondObject) {
   return "";
 }
 
+function safeComponentScoreFromObjects_(componentKey, firstObject, secondObject) {
+  const firstValue = safeComponentScoreFromBestScoringLike_(firstObject, componentKey);
+  if (firstValue !== "") {
+    return firstValue;
+  }
+
+  return safeComponentScoreFromBestScoringLike_(secondObject, componentKey);
+}
+
 function safeScorerConfigSourceFromBestScoring_(bestScoring) {
   if (!bestScoring || typeof bestScoring !== "object") {
     return "";
@@ -644,6 +653,15 @@ function buildBenchmarkRowFromTransportTrialResult_(batchLabel, trialCount, repe
       safeNumberFieldFromObjects_("totalScore", bestScoring, scoringSummary),
       bestScore
     ),
+    PointBalanceGlobal: safeComponentScoreFromObjects_("pointBalanceGlobal", bestScoring, scoringSummary),
+    PointBalanceWithinSection: safeComponentScoreFromObjects_("pointBalanceWithinSection", bestScoring, scoringSummary),
+    SpacingPenalty: safeComponentScoreFromObjects_("spacingPenalty", bestScoring, scoringSummary),
+    CrReward: safeComponentScoreFromObjects_("crReward", bestScoring, scoringSummary),
+    DualEligibleIcuBonus: safeComponentScoreFromObjects_("dualEligibleIcuBonus", bestScoring, scoringSummary),
+    StandbyAdjacencyPenalty: safeComponentScoreFromObjects_("standbyAdjacencyPenalty", bestScoring, scoringSummary),
+    StandbyCountFairnessPenalty: safeComponentScoreFromObjects_("standbyCountFairnessPenalty", bestScoring, scoringSummary),
+    PreLeavePenalty: safeComponentScoreFromObjects_("preLeavePenalty", bestScoring, scoringSummary),
+    UnfilledPenalty: safeComponentScoreFromObjects_("unfilledPenalty", bestScoring, scoringSummary),
     SummaryMessage: summaryMessage,
     FailureMessage: failureMessage
   });
