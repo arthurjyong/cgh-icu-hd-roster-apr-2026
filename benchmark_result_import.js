@@ -1602,6 +1602,128 @@ function resolveSingleCampaignFolderInTrialsSheet_(candidates) {
   return ordered[0];
 }
 
+function buildBenchmarkTrialsWritebackComparisonGroups_(candidates) {
+  const rows = Array.isArray(candidates) ? candidates : [];
+  const groups = {};
+  const orderedKeys = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const candidate = rows[i] || {};
+    const identity = buildBenchmarkSummaryRowIdentity_(candidate, i);
+    const comparisonGroupKey = trimmedStringOrBlank_(identity.comparisonGroupKey);
+
+    if (!comparisonGroupKey) {
+      continue;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(groups, comparisonGroupKey)) {
+      groups[comparisonGroupKey] = {
+        comparisonGroupKey: comparisonGroupKey,
+        comparisonStatus: trimmedStringOrBlank_(identity.comparisonStatus),
+        comparisonStatusReason: trimmedStringOrBlank_(identity.comparisonStatusReason),
+        snapshotFileSha256: trimmedStringOrBlank_(identity.snapshotFileSha256),
+        scorerFingerprint: trimmedStringOrBlank_(identity.scorerFingerprint),
+        candidates: []
+      };
+      orderedKeys.push(comparisonGroupKey);
+    }
+
+    groups[comparisonGroupKey].candidates.push(candidate);
+  }
+
+  return orderedKeys.map(function(key) {
+    return groups[key];
+  });
+}
+
+function formatBenchmarkTrialsWritebackComparisonGroupForError_(group) {
+  const current = group || {};
+  const candidateRows = Array.isArray(current.candidates) ? current.candidates : [];
+  const sampleRunIds = candidateRows.slice(0, 3).map(function(candidate) {
+    return trimmedStringOrBlank_(candidate.RunId);
+  }).filter(function(runId) {
+    return !!runId;
+  });
+  const parts = [
+    current.comparisonStatus || "UNKNOWN",
+    current.comparisonGroupKey || "(missing key)",
+    "rows=" + candidateRows.length
+  ];
+
+  if (current.snapshotFileSha256) {
+    parts.push("snapshot=" + current.snapshotFileSha256);
+  }
+
+  if (current.scorerFingerprint) {
+    parts.push("scorer=" + current.scorerFingerprint);
+  }
+
+  if (sampleRunIds.length > 0) {
+    parts.push("sampleRunIds=" + sampleRunIds.join(", "));
+  }
+
+  return parts.join(", ");
+}
+
+function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
+  const rows = Array.isArray(candidates) ? candidates : [];
+  const options = scopeOptions || {};
+  const requestedComparisonGroupKey = trimmedStringOrBlank_(options.comparisonGroupKey);
+
+  if (rows.length === 0) {
+    throw new Error(
+      "BENCHMARK_TRIALS has no valid writeback candidates. Run a REPLACE campaign import first."
+    );
+  }
+
+  const groups = buildBenchmarkTrialsWritebackComparisonGroups_(rows);
+
+  if (requestedComparisonGroupKey) {
+    const scopedGroup = groups.filter(function(group) {
+      return trimmedStringOrBlank_(group.comparisonGroupKey) === requestedComparisonGroupKey;
+    });
+
+    if (scopedGroup.length === 0) {
+      throw new Error(
+        'Requested comparison group "' + requestedComparisonGroupKey + '" was not found among valid BENCHMARK_TRIALS writeback candidates.'
+      );
+    }
+
+    return {
+      groupCount: groups.length,
+      selectedGroup: scopedGroup[0],
+      scopedCandidates: scopedGroup[0].candidates.slice()
+    };
+  }
+
+  if (groups.length > 1) {
+    throw new Error(
+      "Default benchmark winner writeback is blocked because valid BENCHMARK_TRIALS candidates span multiple comparison groups (" +
+      groups.length +
+      "). Automatic writeback only proceeds when exactly one valid comparison group is in scope. " +
+      "Choose an explicit RunId instead. Groups in scope: " +
+      groups.slice(0, 3).map(formatBenchmarkTrialsWritebackComparisonGroupForError_).join(" | ") +
+      (groups.length > 3 ? " | ..." : "")
+    );
+  }
+
+  const selectedGroup = groups[0];
+  if (!selectedGroup || selectedGroup.comparisonStatus !== "STRICT") {
+    throw new Error(
+      "Default benchmark winner writeback is blocked because the only comparison group in scope is not valid for automatic selection. " +
+      "Automatic writeback requires complete comparable metadata (SnapshotFileSha256 + ScorerFingerprint) on all candidate rows. " +
+      "Choose an explicit RunId instead. Group in scope: " +
+      formatBenchmarkTrialsWritebackComparisonGroupForError_(selectedGroup)
+    );
+  }
+
+  return {
+    groupCount: groups.length,
+    selectedGroup: selectedGroup,
+    scopedCandidates: selectedGroup.candidates.slice()
+  };
+}
+
 function compareBenchmarkTrialsWritebackCandidates_(left, right) {
   const scoreDiff = left.BestScore - right.BestScore;
   if (scoreDiff !== 0) {
@@ -1707,6 +1829,7 @@ function resolveBenchmarkRunArtifactFromTrialsRow_(rowObject) {
     runsFolderId: runsFolder.getId(),
     runFolderId: runFolder.getId(),
     runFolderName: runFolder.getName(),
+    runFolder: runFolder,
     artifactFileId: artifactFile.getId(),
     artifactFileName: artifactFile.getName(),
     artifactLastUpdated: artifactFile.getLastUpdated(),
@@ -1721,6 +1844,116 @@ function numericValuesApproximatelyEqual_(left, right) {
   }
 
   return Math.abs(Number(left) - Number(right)) <= 1e-9;
+}
+
+function readJsonDriveFileOrThrow_(file, contextLabel) {
+  const rawText = readUtf8TextFromDriveFile_(file);
+  return parseJsonOrThrow_(rawText, contextLabel);
+}
+
+function loadBenchmarkRunManifestFromResolvedArtifact_(resolvedArtifact) {
+  const runFolder = resolvedArtifact && resolvedArtifact.runFolder ? resolvedArtifact.runFolder : null;
+  if (!runFolder) {
+    throw new Error("Resolved benchmark run folder is required to load run manifest metadata.");
+  }
+
+  const manifestFile = findSingleFileByNameOrThrow_(
+    runFolder,
+    'run_manifest.json',
+    'run folder "' + runFolder.getName() + '"'
+  );
+
+  return {
+    manifestFileId: manifestFile.getId(),
+    manifestFileName: manifestFile.getName(),
+    manifestFile: manifestFile,
+    manifest: readJsonDriveFileOrThrow_(
+      manifestFile,
+      resolvedArtifact.campaignFolderName + '/runs/' + resolvedArtifact.runFolderName + '/run_manifest.json'
+    )
+  };
+}
+
+function buildBenchmarkRunComparisonMetadataFromArtifacts_(transportResult, manifestDocument) {
+  const transport = transportResult || {};
+  const manifest = manifestDocument || {};
+  const manifestSnapshot = manifest && manifest.snapshot && typeof manifest.snapshot === "object"
+    ? manifest.snapshot
+    : {};
+  const bestTrial = transport && transport.bestTrial && typeof transport.bestTrial === "object"
+    ? transport.bestTrial
+    : {};
+  const scoringSummary = bestTrial && bestTrial.scoringSummary && typeof bestTrial.scoringSummary === "object"
+    ? bestTrial.scoringSummary
+    : {};
+  const bestScoring = transport && transport.bestScoring && typeof transport.bestScoring === "object"
+    ? transport.bestScoring
+    : {};
+
+  return {
+    snapshotFileSha256: trimmedStringOrBlank_(manifestSnapshot.fileSha256),
+    scorerFingerprint: safeScorerFingerprintFieldFromObjects_(
+      "scorerFingerprint",
+      transport,
+      bestScoring,
+      scoringSummary
+    ),
+    scorerFingerprintShort: safeScorerFingerprintFieldFromObjects_(
+      "scorerFingerprintShort",
+      transport,
+      bestScoring,
+      scoringSummary
+    ),
+    scorerFingerprintVersion: safeScorerFingerprintFieldFromObjects_(
+      "scorerFingerprintVersion",
+      transport,
+      bestScoring,
+      scoringSummary
+    )
+  };
+}
+
+function validateBenchmarkTrialsRowComparisonMetadata_(rowObject, comparisonMetadata, resolvedArtifact) {
+  const issues = [];
+  const rowSnapshotFileSha256 = trimmedStringOrBlank_(rowObject && rowObject.SnapshotFileSha256);
+  const rowScorerFingerprint = trimmedStringOrBlank_(rowObject && rowObject.ScorerFingerprint);
+  const metadata = comparisonMetadata || {};
+  const artifactSnapshotFileSha256 = trimmedStringOrBlank_(metadata.snapshotFileSha256);
+  const artifactScorerFingerprint = trimmedStringOrBlank_(metadata.scorerFingerprint);
+  const resolvedArtifactPath =
+    trimmedStringOrBlank_(resolvedArtifact && resolvedArtifact.campaignFolderName) +
+    '/runs/' +
+    trimmedStringOrBlank_(resolvedArtifact && resolvedArtifact.runFolderName) +
+    '/' +
+    trimmedStringOrBlank_(resolvedArtifact && resolvedArtifact.artifactFileName);
+
+  if (rowSnapshotFileSha256 && rowSnapshotFileSha256 !== artifactSnapshotFileSha256) {
+    issues.push(
+      'Selected BENCHMARK_TRIALS SnapshotFileSha256 does not match resolved run manifest snapshot.fileSha256. ' +
+      'Row SnapshotFileSha256="' + rowSnapshotFileSha256 +
+      '", manifest snapshot.fileSha256="' + artifactSnapshotFileSha256 +
+      '", artifact="' + resolvedArtifactPath + '".'
+    );
+  }
+
+  if (rowScorerFingerprint && rowScorerFingerprint !== artifactScorerFingerprint) {
+    issues.push(
+      'Selected BENCHMARK_TRIALS ScorerFingerprint does not match resolved benchmark artifact scorer fingerprint. ' +
+      'Row ScorerFingerprint="' + rowScorerFingerprint +
+      '", artifact scorerFingerprint="' + artifactScorerFingerprint +
+      '", artifact="' + resolvedArtifactPath + '".'
+    );
+  }
+
+  return issues.length > 0
+    ? {
+        ok: false,
+        message: issues[0],
+        issues: issues
+      }
+    : {
+        ok: true
+      };
 }
 
 function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportResult, resolvedArtifact) {
@@ -1785,9 +2018,8 @@ function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportR
 
 function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
   const resolvedArtifact = resolveBenchmarkRunArtifactFromTrialsRow_(rowObject);
-  const rawText = readUtf8TextFromDriveFile_(resolvedArtifact.artifactFile);
-  const transportResult = parseJsonOrThrow_(
-    rawText,
+  const transportResult = readJsonDriveFileOrThrow_(
+    resolvedArtifact.artifactFile,
     resolvedArtifact.campaignFolderName + '/runs/' + resolvedArtifact.runFolderName + '/' + resolvedArtifact.artifactFileName
   );
   const transportValidation = validateTransportTrialResult_(transportResult);
@@ -1801,6 +2033,22 @@ function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
     throw new Error(writebackValidation.message || "Resolved benchmark run artifact is not writeback-safe.");
   }
 
+  const manifestInfo = loadBenchmarkRunManifestFromResolvedArtifact_(resolvedArtifact);
+  const comparisonMetadata = buildBenchmarkRunComparisonMetadataFromArtifacts_(
+    transportResult,
+    manifestInfo.manifest
+  );
+  const comparisonMetadataValidation = validateBenchmarkTrialsRowComparisonMetadata_(
+    rowObject,
+    comparisonMetadata,
+    resolvedArtifact
+  );
+  if (comparisonMetadataValidation.ok !== true) {
+    throw new Error(
+      comparisonMetadataValidation.message || "BENCHMARK_TRIALS comparison metadata does not match resolved artifact provenance."
+    );
+  }
+
   const rowArtifactValidation = validateBenchmarkTrialsRowAgainstTransportResult_(
     rowObject,
     transportResult,
@@ -1812,29 +2060,54 @@ function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
 
   return {
     resolvedArtifact: resolvedArtifact,
+    manifestInfo: manifestInfo,
+    comparisonMetadata: comparisonMetadata,
     transportValidation: transportValidation,
     writebackValidation: writebackValidation,
+    comparisonMetadataValidation: comparisonMetadataValidation,
     rowArtifactValidation: rowArtifactValidation,
     transportResult: transportResult
   };
+}
+
+function buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates) {
+  const rows = Array.isArray(candidates) ? candidates : [];
+
+  return rows.map(function(candidate) {
+    const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWriteback_(candidate);
+    const comparisonMetadata = loadedArtifact && loadedArtifact.comparisonMetadata
+      ? loadedArtifact.comparisonMetadata
+      : {};
+
+    candidate.SnapshotFileSha256 = trimmedStringOrBlank_(comparisonMetadata.snapshotFileSha256);
+    candidate.ScorerFingerprint = trimmedStringOrBlank_(comparisonMetadata.scorerFingerprint);
+    candidate.ScorerFingerprintShort = trimmedStringOrBlank_(comparisonMetadata.scorerFingerprintShort);
+    candidate.ScorerFingerprintVersion = trimmedStringOrBlank_(comparisonMetadata.scorerFingerprintVersion);
+    candidate._loadedArtifactForWriteback = loadedArtifact;
+    return candidate;
+  });
 }
 
 function selectBestBenchmarkTrialsWinnerForWriteback_() {
   const trialsData = readBenchmarkTrialsRowsAsObjects_();
   const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
   assertNoDuplicateBenchmarkTrialsRunIds_(candidates, 'valid writeback candidates');
-  const campaignFolderName = resolveSingleCampaignFolderInTrialsSheet_(candidates);
-  const campaignCandidates = candidates.filter(function(candidate) {
+  const validatedCandidates = buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates);
+  const scope = resolveBenchmarkTrialsWritebackScope_(validatedCandidates);
+  const campaignFolderName = resolveSingleCampaignFolderInTrialsSheet_(scope.scopedCandidates);
+  const campaignCandidates = scope.scopedCandidates.filter(function(candidate) {
     return candidate.CampaignFolderName === campaignFolderName;
   });
   const bestCandidate = pickBestBenchmarkTrialsWritebackCandidate_(campaignCandidates);
-  const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWriteback_(bestCandidate);
+  const loadedArtifact = bestCandidate._loadedArtifactForWriteback || loadAndValidateBenchmarkRunArtifactForWriteback_(bestCandidate);
 
   return {
     ok: true,
     trialsSheetName: trialsData.sheetName,
     trialsDataRowCount: trialsData.rowCount,
     candidateCount: candidates.length,
+    comparisonGroupCount: scope.groupCount,
+    comparisonGroup: scope.selectedGroup,
     campaignFolderName: campaignFolderName,
     candidateRow: bestCandidate,
     loadedArtifact: loadedArtifact,
@@ -1855,6 +2128,10 @@ function buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, includeTr
     trialsSheetName: selection.trialsSheetName,
     trialsDataRowCount: selection.trialsDataRowCount,
     candidateCount: selection.candidateCount,
+    comparisonGroupCount: selection.comparisonGroupCount,
+    comparisonGroupKey: selection.comparisonGroup ? selection.comparisonGroup.comparisonGroupKey || null : null,
+    comparisonStatus: selection.comparisonGroup ? selection.comparisonGroup.comparisonStatus || null : null,
+    comparisonStatusReason: selection.comparisonGroup ? selection.comparisonGroup.comparisonStatusReason || null : null,
     chosenRowNumber: candidate._rowNumber || null,
     campaignFolderName: selection.campaignFolderName,
     campaignBatchLabel: candidate.CampaignBatchLabel || null,
