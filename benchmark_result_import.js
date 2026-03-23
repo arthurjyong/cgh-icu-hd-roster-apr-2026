@@ -1759,9 +1759,85 @@ function buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, includeTr
   return payload;
 }
 
+
+function normalizeBenchmarkTrialsRunIdOrThrow_(runId) {
+  const normalized = trimmedStringOrBlank_(runId);
+  if (!normalized) {
+    throw new Error('RunId is required.');
+  }
+  return normalized;
+}
+
+function selectBenchmarkTrialsRunIdForWriteback_(runId) {
+  const requestedRunId = normalizeBenchmarkTrialsRunIdOrThrow_(runId);
+  const trialsData = readBenchmarkTrialsRowsAsObjects_();
+  const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
+  const requestedRunIdLower = requestedRunId.toLowerCase();
+
+  const matches = candidates.filter(function(candidate) {
+    return candidate.RunIdNormalized === requestedRunIdLower;
+  });
+
+  if (matches.length === 0) {
+    throw new Error(
+      'No valid BENCHMARK_TRIALS candidate was found for RunId "' + requestedRunId + '". ' +
+      'Run a REPLACE campaign import first and confirm the RunId exists.'
+    );
+  }
+
+  if (matches.length > 1) {
+    throw new Error(
+      'Multiple BENCHMARK_TRIALS candidates matched RunId "' + requestedRunId + '". ' +
+      'Run a REPLACE campaign import so only one campaign is in scope, then try again.'
+    );
+  }
+
+  const selectedCandidate = matches[0];
+  const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWriteback_(selectedCandidate);
+
+  return {
+    ok: true,
+    requestedRunId: requestedRunId,
+    trialsSheetName: trialsData.sheetName,
+    trialsDataRowCount: trialsData.rowCount,
+    candidateCount: candidates.length,
+    campaignFolderName: trimmedStringOrBlank_(selectedCandidate.CampaignFolderName),
+    candidateRow: selectedCandidate,
+    loadedArtifact: loadedArtifact,
+    transportResult: loadedArtifact.transportResult
+  };
+}
+
+function buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, includeTransportResult) {
+  const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, includeTransportResult);
+  payload.requestedRunId = selection.requestedRunId || null;
+  return payload;
+}
+
+function debugInspectBenchmarkRunIdForWriteback(runId) {
+  const selection = selectBenchmarkTrialsRunIdForWriteback_(runId);
+  const payload = buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, false);
+  Logger.log(JSON.stringify(payload, null, 2));
+  return payload;
+}
+
+function runWriteBenchmarkRunIdToSheet(runId) {
+  const selection = selectBenchmarkTrialsRunIdForWriteback_(runId);
+  writeTransportTrialResultToSheet_(selection.transportResult);
+
+  const payload = buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, false);
+  payload.message = 'Specified benchmark RunId written to Sheet1 rows 35-38.';
+
+  Logger.log(JSON.stringify(payload, null, 2));
+  return payload;
+}
+
+
 function debugInspectBestBenchmarkTrialsWinnerForWriteback() {
   const selection = selectBestBenchmarkTrialsWinnerForWriteback_();
-  Logger.log(JSON.stringify(buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false), null, 2));
+  const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false);
+  Logger.log(JSON.stringify(payload, null, 2));
+  return payload;
 }
 
 function runWriteBestBenchmarkTrialsWinnerToSheet() {
@@ -1772,4 +1848,5 @@ function runWriteBestBenchmarkTrialsWinnerToSheet() {
   payload.message = 'Best benchmark trials winner written to Sheet1 rows 35-38.';
 
   Logger.log(JSON.stringify(payload, null, 2));
+  return payload;
 }
