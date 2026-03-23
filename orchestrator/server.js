@@ -240,6 +240,7 @@ function applyStatusSummaryToEntry(entry, summary) {
   entry.batchLabel = summary.batchLabel || entry.batchLabel;
   entry.snapshotFileName = summary.snapshotFileName || entry.snapshotFileName;
   entry.snapshotFileSha256 = summary.snapshotFileSha256 || entry.snapshotFileSha256;
+  entry.baseSeed = summary.baseSeed != null ? String(summary.baseSeed) : entry.baseSeed;
   entry.status = summary.status || entry.status;
   entry.plannedRunCount = summary.plannedRunCount != null ? summary.plannedRunCount : entry.plannedRunCount;
   entry.completedRunCount = summary.completedRunCount != null ? summary.completedRunCount : entry.completedRunCount;
@@ -282,6 +283,7 @@ function flattenStatusLikeObject(obj) {
     batchLabel: obj && obj.batchLabel ? obj.batchLabel : null,
     snapshotFileName: obj && obj.snapshotFileName ? obj.snapshotFileName : null,
     snapshotFileSha256: obj && obj.snapshotFileSha256 ? obj.snapshotFileSha256 : null,
+    baseSeed: obj && obj.baseSeed != null ? String(obj.baseSeed) : null,
     status: obj && obj.status ? obj.status : null,
     plannedRunCount: obj && obj.plannedRunCount != null ? obj.plannedRunCount : null,
     completedRunCount: obj && obj.completedRunCount != null ? obj.completedRunCount : null,
@@ -306,6 +308,7 @@ function flattenStartResult(entry) {
     batchLabel: entry.batchLabel,
     snapshotFileName: entry.snapshotFileName,
     snapshotFileSha256: entry.snapshotFileSha256,
+    baseSeed: entry.baseSeed,
     status: entry.status,
     plannedRunCount: entry.plannedRunCount,
     completedRunCount: entry.completedRunCount,
@@ -448,6 +451,7 @@ async function handleCampaignStart(req, res, config) {
   const snapshotSha256 = downloadedSnapshot.sha256 || request.snapshot.fileSha256 || fileSha256OrNull(downloadedSnapshot.localPath);
   const campaignFolderName = buildCampaignFolderName(request.campaignBatchLabel, snapshotSha256, startedAt);
   const plannedRunCount = request.campaignTrialCounts.length * request.campaignRepeats;
+  const resolvedBaseSeed = request.baseSeed == null ? '12345' : String(request.baseSeed);
 
   const entry = {
     campaignId,
@@ -455,6 +459,7 @@ async function handleCampaignStart(req, res, config) {
     batchLabel: request.campaignBatchLabel,
     snapshotFileName: downloadedSnapshot.fileName,
     snapshotFileSha256: snapshotSha256,
+    baseSeed: resolvedBaseSeed,
     status: 'PENDING',
     plannedRunCount,
     completedRunCount: null,
@@ -479,7 +484,7 @@ async function handleCampaignStart(req, res, config) {
     campaignBatchLabel: request.campaignBatchLabel,
     campaignTrialCounts: request.campaignTrialCounts,
     campaignRepeats: request.campaignRepeats,
-    baseSeed: request.baseSeed == null ? null : String(request.baseSeed),
+    baseSeed: resolvedBaseSeed,
     snapshotPath: downloadedSnapshot.localPath,
     snapshotFileName: downloadedSnapshot.fileName,
     snapshotFileSha256: snapshotSha256,
@@ -504,6 +509,7 @@ async function handleCampaignStart(req, res, config) {
       entry.campaignFolderName = result.campaignFolderName || entry.campaignFolderName;
       entry.completedRunCount = result.completedRunCount != null ? result.completedRunCount : entry.completedRunCount;
       entry.plannedRunCount = result.plannedRunCount != null ? result.plannedRunCount : entry.plannedRunCount;
+      entry.baseSeed = result.baseSeed != null ? String(result.baseSeed) : entry.baseSeed;
       entry.lastUpdated = new Date().toISOString();
       entry.completedAt = entry.lastUpdated;
       if (result.campaignStatusSummary) {

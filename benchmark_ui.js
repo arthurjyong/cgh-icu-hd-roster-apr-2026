@@ -1,8 +1,10 @@
 function getBenchmarkUiConfig_() {
   return {
     sheetName: 'SCORER_CONFIG',
+    specificRunIdPlaceholder: '<insert_RunID>',
     namedRanges: {
       targetMaxTrialCount: 'BENCHMARK_UI_TARGET_MAX_TRIAL_COUNT',
+      seedOverride: 'BENCHMARK_UI_SEED_OVERRIDE',
       status: 'BENCHMARK_UI_STATUS',
       campaignFolder: 'BENCHMARK_UI_CAMPAIGN_FOLDER',
       completedRuns: 'BENCHMARK_UI_COMPLETED_RUNS',
@@ -10,18 +12,21 @@ function getBenchmarkUiConfig_() {
       bestRunId: 'BENCHMARK_UI_BEST_RUN_ID',
       bestScore: 'BENCHMARK_UI_BEST_SCORE',
       lastUpdated: 'BENCHMARK_UI_LAST_UPDATED',
-      specificRunId: 'BENCHMARK_UI_SPECIFIC_RUN_ID'
+      specificRunId: 'BENCHMARK_UI_SPECIFIC_RUN_ID',
+      campaignSeed: 'BENCHMARK_UI_CAMPAIGN_SEED'
     },
     fallbackCells: {
       targetMaxTrialCount: 'O2',
-      status: 'O3',
-      campaignFolder: 'O4',
-      completedRuns: 'O5',
-      plannedRuns: 'O6',
-      bestRunId: 'O7',
-      bestScore: 'O8',
-      lastUpdated: 'O9',
-      specificRunId: 'O12'
+      seedOverride: 'O3',
+      status: 'O4',
+      campaignFolder: 'O5',
+      completedRuns: 'O6',
+      plannedRuns: 'O7',
+      bestRunId: 'O8',
+      bestScore: 'O9',
+      lastUpdated: 'O10',
+      specificRunId: 'O12',
+      campaignSeed: 'O13'
     },
     allowedTargetMaxTrialCounts: [
       1,
@@ -67,14 +72,16 @@ function getBenchmarkUiAllowedTargetMaxTrialCounts_() {
 function getBenchmarkUiNamedRangeTargetA1Map_() {
   return {
     targetMaxTrialCount: 'B18',
-    specificRunId: 'C22',
-    status: 'B25',
-    campaignFolder: 'B26',
-    bestRunId: 'B27',
-    bestScore: 'B28',
-    lastUpdated: 'B29',
-    completedRuns: 'B30',
-    plannedRuns: 'B31'
+    seedOverride: 'B19',
+    specificRunId: 'C23',
+    status: 'B26',
+    campaignFolder: 'B27',
+    bestRunId: 'B28',
+    bestScore: 'B29',
+    lastUpdated: 'B30',
+    completedRuns: 'B31',
+    plannedRuns: 'B32',
+    campaignSeed: 'B33'
   };
 }
 
@@ -220,6 +227,12 @@ function readBenchmarkUiTargetMaxTrialCount_() {
 
 function readBenchmarkUiSpecificRunId_() {
   const control = resolveBenchmarkUiControlRange_('specificRunId');
+  const normalized = normalizeBenchmarkUiString_(control.getValue());
+  return normalized === getBenchmarkUiConfig_().specificRunIdPlaceholder ? '' : normalized;
+}
+
+function readBenchmarkUiSeedOverride_() {
+  const control = resolveBenchmarkUiControlRange_('seedOverride');
   return normalizeBenchmarkUiString_(control.getValue());
 }
 
@@ -228,7 +241,8 @@ function readBenchmarkUiControlState_() {
   return {
     targetMaxTrialCount: targetMaxTrialCount,
     expandedTrialCounts: buildBenchmarkTrialCountsUpToTarget_(targetMaxTrialCount),
-    specificRunId: readBenchmarkUiSpecificRunId_()
+    specificRunId: readBenchmarkUiSpecificRunId_(),
+    seedOverride: readBenchmarkUiSeedOverride_()
   };
 }
 
@@ -278,6 +292,10 @@ function writeBenchmarkUiCampaignProgress_(statusPayload) {
     writeBenchmarkUiControlValue_('bestScore', payload.currentBestScore === null || payload.currentBestScore === undefined ? '' : payload.currentBestScore);
   }
 
+  if (Object.prototype.hasOwnProperty.call(payload, 'campaignSeed')) {
+    writeBenchmarkUiControlValue_('campaignSeed', normalizeBenchmarkUiString_(payload.campaignSeed));
+  }
+
   writeBenchmarkUiLastUpdated_(new Date());
 }
 
@@ -287,7 +305,9 @@ function clearBenchmarkUiCampaignProgress_() {
   writeBenchmarkUiControlValue_('plannedRuns', '');
   writeBenchmarkUiControlValue_('bestRunId', '');
   writeBenchmarkUiControlValue_('bestScore', '');
-  writeBenchmarkUiControlValue_('specificRunId', '');
+  writeBenchmarkUiControlValue_('campaignSeed', '');
+  writeBenchmarkUiControlValue_('seedOverride', '');
+  writeBenchmarkUiControlValue_('specificRunId', getBenchmarkUiConfig_().specificRunIdPlaceholder);
   writeBenchmarkUiStatus_(getBenchmarkUiConfig_().defaultStatus);
 }
 
@@ -310,8 +330,17 @@ function initializeBenchmarkUiControls_() {
     statusRange.setValue(getBenchmarkUiConfig_().defaultStatus);
   }
 
+  const seedOverrideRange = resolveBenchmarkUiControlRange_('seedOverride');
+  seedOverrideRange.setNumberFormat('@');
+
   const specificRunIdRange = resolveBenchmarkUiControlRange_('specificRunId');
   specificRunIdRange.setNumberFormat('@');
+  if (!normalizeBenchmarkUiString_(specificRunIdRange.getValue())) {
+    specificRunIdRange.setValue(getBenchmarkUiConfig_().specificRunIdPlaceholder);
+  }
+
+  const campaignSeedRange = resolveBenchmarkUiControlRange_('campaignSeed');
+  campaignSeedRange.setNumberFormat('@');
 
   writeBenchmarkUiLastUpdated_(new Date());
 
@@ -319,7 +348,9 @@ function initializeBenchmarkUiControls_() {
     ok: true,
     sheetName: getBenchmarkUiSheet_().getName(),
     targetMaxTrialCountCell: targetRange.getA1Notation(),
+    seedOverrideCell: seedOverrideRange.getA1Notation(),
     specificRunIdCell: specificRunIdRange.getA1Notation(),
+    campaignSeedCell: campaignSeedRange.getA1Notation(),
     allowedTargetMaxTrialCounts: allowed,
     installResult: installResult
   };
@@ -337,6 +368,30 @@ function debugReadBenchmarkUiControlState_() {
   return state;
 }
 
+function restoreBenchmarkUiPlaceholdersOnEdit_(e) {
+  if (!e || !e.range || typeof e.range.getA1Notation !== 'function') {
+    return;
+  }
+
+  const range = e.range;
+  const sheet = range.getSheet ? range.getSheet() : null;
+  if (!sheet || sheet.getName() !== getBenchmarkUiConfig_().sheetName) {
+    return;
+  }
+
+  const specificRunIdRange = resolveBenchmarkUiControlRange_('specificRunId');
+  if (range.getSheet().getSheetId() !== specificRunIdRange.getSheet().getSheetId()) {
+    return;
+  }
+  if (range.getA1Notation() !== specificRunIdRange.getA1Notation()) {
+    return;
+  }
+
+  if (!normalizeBenchmarkUiString_(range.getValue())) {
+    range.setValue(getBenchmarkUiConfig_().specificRunIdPlaceholder);
+  }
+}
+
 
 function installBenchmarkUiNamedRanges() {
   return installBenchmarkUiNamedRanges_();
@@ -352,4 +407,8 @@ function debugBenchmarkUiControlMap() {
 
 function debugReadBenchmarkUiControlState() {
   return debugReadBenchmarkUiControlState_();
+}
+
+function onEdit(e) {
+  restoreBenchmarkUiPlaceholdersOnEdit_(e);
 }

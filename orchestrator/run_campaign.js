@@ -292,6 +292,7 @@ async function runCampaign(input) {
     batchLabel: config.campaignBatchLabel,
     snapshotFileName: config.snapshotFileName,
     snapshotFileSha256: config.snapshotFileSha256,
+    baseSeed: config.baseSeed,
     plannedRunCount: config.campaignTrialCounts.length * config.campaignRepeats,
     startedAt: new Date().toISOString()
   });
@@ -299,6 +300,7 @@ async function runCampaign(input) {
 
   state = validateCampaignState({
     ...state,
+    baseSeed: config.baseSeed,
     status: CAMPAIGN_STATUSES.RUNNING,
     lastUpdated: new Date().toISOString()
   });
@@ -379,6 +381,7 @@ async function runCampaign(input) {
       completedRunCount: state.completedRunCount,
       currentBestRunId: state.currentBestRun ? state.currentBestRun.runId : null,
       currentBestScore: state.currentBestRun ? state.currentBestRun.bestScore : null,
+      baseSeed: config.baseSeed,
       campaignDir: config.campaignDir,
       campaignReportPath: fs.existsSync(campaignReportPath) ? campaignReportPath : null,
       statusFilePath,
@@ -402,6 +405,7 @@ async function runCampaign(input) {
     completedRunCount: state.completedRunCount,
     currentBestRunId: state.currentBestRun ? state.currentBestRun.runId : null,
     currentBestScore: state.currentBestRun ? state.currentBestRun.bestScore : null,
+    baseSeed: config.baseSeed,
     campaignDir: config.campaignDir,
     campaignReportPath: fs.existsSync(campaignReportPath) ? campaignReportPath : null,
     statusFilePath,
