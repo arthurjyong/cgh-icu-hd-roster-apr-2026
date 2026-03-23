@@ -785,26 +785,38 @@ function isGlobalCampaignRunId_(runId) {
 }
 
 function getBenchmarkRunIdStatus_(runId) {
-  return isGlobalCampaignRunId_(runId) ? "GLOBAL_CAMPAIGN_ID" : "DEPRECATED_LEGACY_ID";
+  const normalizedRunId = normalizeBenchmarkSummaryString_(runId);
+
+  if (!normalizedRunId) {
+    return "";
+  }
+
+  return isGlobalCampaignRunId_(normalizedRunId) ? "GLOBAL_CAMPAIGN_ID" : "DEPRECATED_LEGACY_ID";
 }
 
 function buildBenchmarkReviewRows_() {
   const trialsSheet = ensureBenchmarkTrialsSheet_();
-  const trialsHeader = getBenchmarkTrialsHeader_();
   const reviewHeader = getBenchmarkReviewHeader_();
   const lastRow = trialsSheet.getLastRow();
+  const lastColumn = trialsSheet.getLastColumn();
 
-  if (lastRow < 2) {
+  if (lastRow < 2 || lastColumn < 1) {
     return [];
   }
 
-  const trialValues = trialsSheet.getRange(2, 1, lastRow - 1, trialsHeader.length).getValues();
+  const actualHeader = trialsSheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  const headerMap = buildHeaderIndexMapFromRow_(actualHeader);
+  const trialValues = trialsSheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
 
   return trialValues.map(function(sourceRow) {
     const rowObject = {};
 
-    for (let i = 0; i < trialsHeader.length; i++) {
-      rowObject[trialsHeader[i]] = sourceRow[i];
+    for (let i = 0; i < actualHeader.length; i++) {
+      const columnName = normalizeBenchmarkSummaryString_(actualHeader[i]);
+      if (!columnName || typeof headerMap[columnName] !== "number") {
+        continue;
+      }
+      rowObject[columnName] = sourceRow[i];
     }
 
     rowObject.RunIdStatus = getBenchmarkRunIdStatus_(rowObject.RunId);
@@ -1325,6 +1337,7 @@ function benchmarkTrialCountsExternalHttp_(trialCounts, repeats, batchLabel, opt
 
     if (settings.refreshSummaryAfterEachTrialCount) {
       refreshBenchmarkSummarySheet();
+      refreshBenchmarkReviewSheet();
     }
 
     if (stopRequested) {
@@ -1334,6 +1347,7 @@ function benchmarkTrialCountsExternalHttp_(trialCounts, repeats, batchLabel, opt
 
   if (!settings.refreshSummaryAfterEachTrialCount) {
     refreshBenchmarkSummarySheet();
+    refreshBenchmarkReviewSheet();
   }
 
   const result = {
