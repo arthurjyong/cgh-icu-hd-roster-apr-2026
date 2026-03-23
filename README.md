@@ -370,6 +370,21 @@ Additional safety hardening now in place:
 - specific `RunId` inspection/writeback can be triggered directly from the Apps Script UI control panel
 - writeback validates the selected raw row against the resolved nested Drive artifact before writing to `Sheet1`
 
+### Phase 5 — auto-writeback gating
+
+Completed:
+- default best-winner auto-writeback still reads canonical raw rows from `BENCHMARK_TRIALS`
+- comparison-group gating reuses the same comparison identity logic already used by `BENCHMARK_SUMMARY`
+- default auto-writeback now proceeds only when exactly one `STRICT` comparison group is in scope across valid writeback candidates
+- if valid candidates span multiple comparison groups, default auto-writeback is blocked with an operator-facing error that instructs explicit `RunId` selection instead
+- if the only in-scope group has incomplete comparison metadata, default auto-writeback is also blocked rather than guessing
+- specific-`RunId` inspection and writeback remain available
+- Drive artifact validation and writeback-safety validation remain unchanged
+
+Current operational note:
+- `BENCHMARK_REVIEW` remains a review surface for humans, not the canonical selector for writeback
+- Phase 5 leaves a small scope-selection seam in the default selector so Phase 6 can later add explicit comparison-group or snapshot+scorer scoping without reworking the writeback pipeline
+
 ## Project structure
 
 Current source files are organized roughly as follows:
