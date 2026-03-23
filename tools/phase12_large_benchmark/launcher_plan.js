@@ -81,11 +81,15 @@ function sanitizeRunIdComponent(value, fallbackValue) {
 
 function deriveCampaignIdentityForRunId(config, snapshotInfo) {
   const sourceConfig = config || {};
-  const explicitCampaignDir = typeof sourceConfig.campaignDir === 'string' && sourceConfig.campaignDir.trim()
-    ? path.basename(sourceConfig.campaignDir.trim())
+  const resolvedCampaignDir = typeof sourceConfig.campaignDir === 'string' && sourceConfig.campaignDir.trim()
+    ? path.resolve(sourceConfig.campaignDir.trim())
     : '';
+  const campaignDirBaseName = resolvedCampaignDir ? path.basename(resolvedCampaignDir) : '';
 
-  const campaignIdentitySource = explicitCampaignDir || [
+  const readableIdentitySource = campaignDirBaseName || sourceConfig.campaignBatchLabel || 'campaign';
+  const campaignIdentityHashSource = [
+    resolvedCampaignDir || '',
+    campaignDirBaseName || '',
     sourceConfig.campaignBatchLabel || 'campaign',
     snapshotInfo && snapshotInfo.file && snapshotInfo.file.fileSha256
       ? snapshotInfo.file.fileSha256.slice(0, 8)
@@ -95,9 +99,10 @@ function deriveCampaignIdentityForRunId(config, snapshotInfo) {
     sourceConfig.campaignRepeats || 'repeats'
   ].join('__');
 
-  const safeIdentity = sanitizeRunIdComponent(campaignIdentitySource, 'campaign');
-  const readablePrefix = safeIdentity.slice(0, 24).replace(/^_+|_+$/g, '') || 'campaign';
-  const identityHash = computeSha256Hex(safeIdentity).slice(0, 8);
+  const readablePrefix = sanitizeRunIdComponent(readableIdentitySource, 'campaign')
+    .slice(0, 24)
+    .replace(/^_+|_+$/g, '') || 'campaign';
+  const identityHash = computeSha256Hex(campaignIdentityHashSource).slice(0, 8);
 
   return `${readablePrefix}_${identityHash}`;
 }

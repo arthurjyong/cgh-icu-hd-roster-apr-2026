@@ -1867,7 +1867,6 @@ function selectBenchmarkTrialsRunIdForWriteback_(runId) {
   const requestedRunId = normalizeBenchmarkTrialsRunIdOrThrow_(runId);
   const trialsData = readBenchmarkTrialsRowsAsObjects_();
   const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
-  assertNoDuplicateBenchmarkTrialsRunIds_(candidates, 'valid writeback candidates');
   const requestedRunIdLower = normalizeBenchmarkTrialsRunIdForCompare_(requestedRunId);
 
   const matches = candidates.filter(function(candidate) {
@@ -1881,12 +1880,10 @@ function selectBenchmarkTrialsRunIdForWriteback_(runId) {
     );
   }
 
-  if (matches.length > 1) {
-    throw new Error(
-      'Multiple BENCHMARK_TRIALS candidates matched RunId "' + requestedRunId + '". ' +
-      'RunId is now expected to be globally unique, so this is a data-integrity problem that should be cleaned up before writeback.'
-    );
-  }
+  assertNoDuplicateBenchmarkTrialsRunIds_(
+    matches,
+    'the requested RunId "' + requestedRunId + '"'
+  );
 
   const selectedCandidate = matches[0];
   const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWriteback_(selectedCandidate);
