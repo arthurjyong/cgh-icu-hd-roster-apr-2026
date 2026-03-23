@@ -29,6 +29,15 @@ function getBenchmarkTrialsHeader_() {
     "StandardDeviation",
     "Range",
     "TotalScore",
+    "PointBalanceGlobal",
+    "PointBalanceWithinSection",
+    "SpacingPenalty",
+    "CrReward",
+    "DualEligibleIcuBonus",
+    "StandbyAdjacencyPenalty",
+    "StandbyCountFairnessPenalty",
+    "PreLeavePenalty",
+    "UnfilledPenalty",
     "SummaryMessage",
     "FailureMessage"
   ];
@@ -205,6 +214,15 @@ function buildBenchmarkRow_(batchLabel, trialCount, repeatIndex, runtimeMs, tria
     StandardDeviation: bestScoring && typeof bestScoring.standardDeviation === "number" ? bestScoring.standardDeviation : "",
     Range: bestScoring && typeof bestScoring.range === "number" ? bestScoring.range : "",
     TotalScore: bestScore,
+    PointBalanceGlobal: safeComponentScore_(bestScoring, "pointBalanceGlobal"),
+    PointBalanceWithinSection: safeComponentScore_(bestScoring, "pointBalanceWithinSection"),
+    SpacingPenalty: safeComponentScore_(bestScoring, "spacingPenalty"),
+    CrReward: safeComponentScore_(bestScoring, "crReward"),
+    DualEligibleIcuBonus: safeComponentScore_(bestScoring, "dualEligibleIcuBonus"),
+    StandbyAdjacencyPenalty: safeComponentScore_(bestScoring, "standbyAdjacencyPenalty"),
+    StandbyCountFairnessPenalty: safeComponentScore_(bestScoring, "standbyCountFairnessPenalty"),
+    PreLeavePenalty: safeComponentScore_(bestScoring, "preLeavePenalty"),
+    UnfilledPenalty: safeComponentScore_(bestScoring, "unfilledPenalty"),
     SummaryMessage: ok ? "" : "",
     FailureMessage: failureMessage
   });
