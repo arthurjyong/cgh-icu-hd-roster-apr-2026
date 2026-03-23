@@ -755,12 +755,12 @@ function safeScorerConfigSourceFromBestScoring_(bestScoring) {
     return "";
   }
 
-  if (bestScoring.scorerConfig && bestScoring.scorerConfig.source) {
-    return bestScoring.scorerConfig.source;
-  }
-
   if (bestScoring.scorerSource) {
     return bestScoring.scorerSource;
+  }
+
+  if (bestScoring.scorerConfig && bestScoring.scorerConfig.source) {
+    return bestScoring.scorerConfig.source;
   }
 
   if (bestScoring.source) {
