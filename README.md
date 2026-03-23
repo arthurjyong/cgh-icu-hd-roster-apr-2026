@@ -586,6 +586,39 @@ Current direction:
 
 This is now a working incremental migration, not just a future concept.
 
+## Cloud Run env and deploy setup
+
+This repo now includes a small shell-first deployment/env layer for the Cloud Run worker and orchestrator.
+
+Files:
+- `.env.shared` — committed non-sensitive defaults and canonical variable names
+- `.env.example` — redacted template for local overrides
+- `.env.local` — gitignored machine-specific and sensitive overrides
+- `scripts/load_env.sh` — source shared + local config, resolve secret file references, derive image URLs, and export compatibility aliases
+- `scripts/deploy_cloud_run.sh` — build/push/deploy wrapper for `worker`, `orchestrator`, or `both`
+
+Recommended local setup:
+1. copy `.env.example` to `.env.local`
+2. fill in actual values such as `GCP_PROJECT`, `AR_REPO`, and `ORCH_SERVICE`
+3. keep secret values outside the repo as files referenced by `*_FILE` variables
+4. source the loader before running local tooling or deployment commands
+
+Example commands:
+
+```bash
+cp .env.example .env.local
+source scripts/load_env.sh
+printf '%s\n' "$GIT_SHA" "$WORKER_IMAGE" "$ORCH_IMAGE"
+DRY_RUN=1 ./scripts/deploy_cloud_run.sh worker
+DRY_RUN=1 ./scripts/deploy_cloud_run.sh orchestrator
+./scripts/deploy_cloud_run.sh worker
+```
+
+Compatibility notes:
+- the loader exports `PHASE12_*` compatibility aliases so the existing large-benchmark launcher can keep working without a coordinated rename
+- worker deploy is ready to use once the required project/image values are filled in
+- orchestrator deploy still requires operator verification for how Drive OAuth files will exist inside Cloud Run at the configured runtime paths
+
 ## Repository and deployment notes
 
 - this repository tracks the local source of the Apps Script project and related worker/local-tooling files
@@ -593,6 +626,7 @@ This is now a working incremental migration, not just a future concept.
 - the live spreadsheet and Apps Script deployment are managed separately
 - the external worker is deployed separately from Apps Script
 - local launcher OAuth tokens and local environment files are not part of Apps Script
+- `.env.shared` is committed for non-sensitive defaults, while `.env.local` remains gitignored for machine-specific and secret overrides
 - no open-source license is granted at this time
 - this project should be reviewed and validated before real operational use
 
