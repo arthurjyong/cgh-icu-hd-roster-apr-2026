@@ -173,8 +173,8 @@ function buildBenchmarkCampaignBatchLabelFromUi_(targetMaxTrialCount) {
 
 function generateBenchmarkCampaignSeed_() {
   const now = Date.now();
-  const randomPart = Math.floor(Math.random() * 1000000);
-  return String(now) + String(randomPart).padStart(6, '0');
+  const randomPart = Math.floor(Math.random() * 1000);
+  return String((now * 1000) + randomPart);
 }
 
 function resolveBenchmarkCampaignSeedFromUi_(uiState) {
@@ -467,6 +467,7 @@ function pollActiveBenchmarkCampaign_() {
       campaignFolderName: state.campaignFolderName,
       completedRunCount: completedRunCount,
       plannedRunCount: plannedRunCount,
+      baseSeed: statusResponse.baseSeed != null ? statusResponse.baseSeed : state.campaignSeed,
       currentBestRunId: statusResponse.currentBestRunId ||
         (importResult && importResult.bestWinner && importResult.bestWinner.runId) || '',
       currentBestScore: statusResponse.currentBestScore !== undefined &&
