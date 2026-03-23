@@ -66,6 +66,18 @@ _cgh_export_path_var_if_set() {
   fi
 }
 
+_cgh_export_runtime_path_var_if_set() {
+  local name="$1"
+  local value="${!name:-}"
+  if [[ -n "$value" ]]; then
+    if [[ "$value" != /* ]]; then
+      echo "$name must be an absolute runtime path inside the container: $value" >&2
+      return 1
+    fi
+    export "$name=$value"
+  fi
+}
+
 _cgh_load_secret_from_file_var() {
   local secret_var="$1"
   local file_var="$2"
@@ -84,6 +96,13 @@ _cgh_source_if_exists "$_cgh_repo_root/.env.shared"
 _cgh_source_if_exists "$_cgh_repo_root/.env.local"
 
 export CGH_ROSTER_ROOT="${CGH_ROSTER_ROOT:-$_cgh_repo_root}"
+export CGH_SECRETS_ROOT="${CGH_SECRETS_ROOT:-$HOME/.config/cgh-roster}"
+export CGH_TMP_ROOT="${CGH_TMP_ROOT:-tmp}"
+export DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE="${DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE:-$CGH_SECRETS_ROOT/drive/oauth_client_credentials.json}"
+export DRIVE_OAUTH_TOKEN_FILE="${DRIVE_OAUTH_TOKEN_FILE:-$CGH_SECRETS_ROOT/drive/oauth_token.json}"
+export WORKER_TOKEN_FILE="${WORKER_TOKEN_FILE:-$CGH_SECRETS_ROOT/cloud-run/worker_token.txt}"
+export ORCHESTRATOR_AUTH_TOKEN_FILE="${ORCHESTRATOR_AUTH_TOKEN_FILE:-$CGH_SECRETS_ROOT/cloud-run/orchestrator_auth_token.txt}"
+export ORCHESTRATOR_OUTPUT_ROOT="${ORCHESTRATOR_OUTPUT_ROOT:-$CGH_TMP_ROOT/phase14_campaigns}"
 _cgh_export_path_var_if_set CGH_ROSTER_ROOT
 _cgh_export_path_var_if_set CGH_SECRETS_ROOT
 _cgh_export_path_var_if_set CGH_TMP_ROOT
@@ -96,6 +115,8 @@ _cgh_export_path_var_if_set DRIVE_OAUTH_TOKEN_FILE
 _cgh_export_path_var_if_set WORKER_TOKEN_FILE
 _cgh_export_path_var_if_set ORCHESTRATOR_AUTH_TOKEN_FILE
 _cgh_export_path_var_if_set ORCHESTRATOR_OUTPUT_ROOT
+_cgh_export_runtime_path_var_if_set ORCH_DRIVE_OAUTH_CLIENT_CREDENTIALS_RUNTIME_FILE
+_cgh_export_runtime_path_var_if_set ORCH_DRIVE_OAUTH_TOKEN_RUNTIME_FILE
 
 _cgh_load_secret_from_file_var WORKER_TOKEN WORKER_TOKEN_FILE
 _cgh_load_secret_from_file_var ORCHESTRATOR_AUTH_TOKEN ORCHESTRATOR_AUTH_TOKEN_FILE
@@ -120,8 +141,8 @@ fi
 export BENCHMARK_ORCHESTRATOR_AUTH_TOKEN="${BENCHMARK_ORCHESTRATOR_AUTH_TOKEN:-${ORCHESTRATOR_AUTH_TOKEN:-}}"
 export ORCHESTRATOR_AUTH_TOKEN="${ORCHESTRATOR_AUTH_TOKEN:-${BENCHMARK_ORCHESTRATOR_AUTH_TOKEN:-}}"
 
-export BENCHMARK_DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE="${BENCHMARK_DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE:-${DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE:-}}"
-export BENCHMARK_DRIVE_OAUTH_TOKEN_FILE="${BENCHMARK_DRIVE_OAUTH_TOKEN_FILE:-${DRIVE_OAUTH_TOKEN_FILE:-}}"
+export BENCHMARK_DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE="${BENCHMARK_DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE:-${ORCH_DRIVE_OAUTH_CLIENT_CREDENTIALS_RUNTIME_FILE:-}}"
+export BENCHMARK_DRIVE_OAUTH_TOKEN_FILE="${BENCHMARK_DRIVE_OAUTH_TOKEN_FILE:-${ORCH_DRIVE_OAUTH_TOKEN_RUNTIME_FILE:-}}"
 export BENCHMARK_DRIVE_ROOT_FOLDER_ID="${BENCHMARK_DRIVE_ROOT_FOLDER_ID:-${DRIVE_ROOT_FOLDER_ID:-}}"
 export BENCHMARK_DRIVE_BENCHMARK_RUNS_FOLDER_ID="${BENCHMARK_DRIVE_BENCHMARK_RUNS_FOLDER_ID:-${DRIVE_BENCHMARK_RUNS_FOLDER_ID:-}}"
 export BENCHMARK_DRIVE_BENCHMARK_RUNS_FOLDER_NAME="${BENCHMARK_DRIVE_BENCHMARK_RUNS_FOLDER_NAME:-${DRIVE_BENCHMARK_RUNS_FOLDER_NAME:-}}"
@@ -164,4 +185,5 @@ unset -f _cgh_trim_trailing_newlines
 unset -f _cgh_read_secret_file
 unset -f _cgh_abspath
 unset -f _cgh_export_path_var_if_set
+unset -f _cgh_export_runtime_path_var_if_set
 unset -f _cgh_load_secret_from_file_var

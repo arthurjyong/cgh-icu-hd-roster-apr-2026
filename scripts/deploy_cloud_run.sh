@@ -13,7 +13,6 @@ fi
 
 repo_root="$CGH_ROSTER_ROOT"
 dry_run="${DRY_RUN:-0}"
-
 require_var() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
@@ -54,20 +53,23 @@ join_by_comma() {
 }
 
 run_cmd() {
-  printf '+ '
-  printf '%q ' "$@"
-  printf '\n'
+  printf '+ ' >&2
+  printf '%q ' "$@" >&2
+  printf '\n' >&2
   if [[ "$dry_run" == "1" ]]; then
     return 0
   fi
   "$@"
 }
 
-warn_orchestrator_file_path_strategy() {
-  if [[ -n "${DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE:-}" || -n "${DRIVE_OAUTH_TOKEN_FILE:-}" ]]; then
-    echo "WARNING: orchestrator runtime still expects Drive OAuth files to exist at runtime paths." >&2
-    echo "WARNING: verify your Cloud Run secret/file mounting strategy before a live orchestrator deploy." >&2
+capture_cmd() {
+  printf '+ ' >&2
+  printf '%q ' "$@" >&2
+  printf '\n' >&2
+  if [[ "$dry_run" == "1" ]]; then
+    return 1
   fi
+  "$@"
 }
 
 build_and_push_image() {
@@ -77,6 +79,48 @@ build_and_push_image() {
   require_var REGION
   require_var AR_REPO
   run_cmd docker buildx build --platform linux/amd64 --file "$dockerfile" --tag "$image" --push "$repo_root"
+}
+
+resolve_worker_url() {
+  if [[ -n "${WORKER_URL:-}" ]]; then
+    printf '%s\n' "$WORKER_URL"
+    return 0
+  fi
+
+  require_var WORKER_SERVICE
+  require_var REGION
+  require_var GCP_PROJECT
+
+  if [[ "$dry_run" == "1" ]]; then
+    echo "WORKER_URL is required for dry-run orchestrator deploys because the live URL cannot be looked up." >&2
+    return 1
+  fi
+
+  local resolved
+  resolved="$(capture_cmd gcloud run services describe "$WORKER_SERVICE" --region "$REGION" --project "$GCP_PROJECT" --format='value(status.url)')" || true
+  if [[ -z "$resolved" ]]; then
+    echo "Unable to resolve WORKER_URL from Cloud Run service $WORKER_SERVICE." >&2
+    return 1
+  fi
+
+  export WORKER_URL="$resolved"
+  export BENCHMARK_WORKER_URL="$resolved"
+  export PHASE12_WORKER_URL="$resolved"
+  printf '%s\n' "$resolved"
+}
+
+require_orchestrator_runtime_oauth_paths() {
+  require_var ORCH_DRIVE_OAUTH_CLIENT_CREDENTIALS_RUNTIME_FILE
+  require_var ORCH_DRIVE_OAUTH_TOKEN_RUNTIME_FILE
+
+  if [[ "$ORCH_DRIVE_OAUTH_CLIENT_CREDENTIALS_RUNTIME_FILE" != /* ]]; then
+    echo "ORCH_DRIVE_OAUTH_CLIENT_CREDENTIALS_RUNTIME_FILE must be an absolute container runtime path." >&2
+    exit 1
+  fi
+  if [[ "$ORCH_DRIVE_OAUTH_TOKEN_RUNTIME_FILE" != /* ]]; then
+    echo "ORCH_DRIVE_OAUTH_TOKEN_RUNTIME_FILE must be an absolute container runtime path." >&2
+    exit 1
+  fi
 }
 
 deploy_worker() {
@@ -108,6 +152,10 @@ deploy_worker() {
 
   args+=(--set-env-vars "$(join_by_comma "${env_pairs[@]}")")
   run_cmd "${args[@]}"
+
+  if [[ "$dry_run" != "1" ]]; then
+    resolve_worker_url >/dev/null
+  fi
 }
 
 deploy_orchestrator() {
@@ -115,25 +163,25 @@ deploy_orchestrator() {
   require_var ORCH_IMAGE
   require_var ORCH_DOCKERFILE
   require_var ORCHESTRATOR_AUTH_TOKEN
-  require_var WORKER_URL
   require_var WORKER_TOKEN
   require_var DRIVE_ROOT_FOLDER_ID
   require_var DRIVE_BENCHMARK_RUNS_FOLDER_ID
-  require_var DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE
-  require_var DRIVE_OAUTH_TOKEN_FILE
+  require_orchestrator_runtime_oauth_paths
 
-  warn_orchestrator_file_path_strategy
+  local worker_url
+  worker_url="$(resolve_worker_url)"
+
   build_and_push_image "$ORCH_IMAGE" "$ORCH_DOCKERFILE"
 
   local args=(gcloud run deploy "$ORCH_SERVICE" --image "$ORCH_IMAGE" --region "$REGION" --project "$GCP_PROJECT")
   local env_pairs=(
     "BENCHMARK_ORCHESTRATOR_AUTH_TOKEN=$ORCHESTRATOR_AUTH_TOKEN"
-    "BENCHMARK_WORKER_URL=$WORKER_URL"
+    "BENCHMARK_WORKER_URL=$worker_url"
     "BENCHMARK_WORKER_TOKEN=$WORKER_TOKEN"
     "BENCHMARK_DRIVE_ROOT_FOLDER_ID=$DRIVE_ROOT_FOLDER_ID"
     "BENCHMARK_DRIVE_BENCHMARK_RUNS_FOLDER_ID=$DRIVE_BENCHMARK_RUNS_FOLDER_ID"
-    "BENCHMARK_DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE=$DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE"
-    "BENCHMARK_DRIVE_OAUTH_TOKEN_FILE=$DRIVE_OAUTH_TOKEN_FILE"
+    "BENCHMARK_DRIVE_OAUTH_CLIENT_CREDENTIALS_FILE=$ORCH_DRIVE_OAUTH_CLIENT_CREDENTIALS_RUNTIME_FILE"
+    "BENCHMARK_DRIVE_OAUTH_TOKEN_FILE=$ORCH_DRIVE_OAUTH_TOKEN_RUNTIME_FILE"
   )
 
   append_set_env_var_if_set env_pairs BENCHMARK_DRIVE_BENCHMARK_RUNS_FOLDER_NAME

@@ -600,8 +600,10 @@ Files:
 Recommended local setup:
 1. copy `.env.example` to `.env.local`
 2. fill in actual values such as `GCP_PROJECT`, `AR_REPO`, and `ORCH_SERVICE`
-3. keep secret values outside the repo as files referenced by `*_FILE` variables
-4. source the loader before running local tooling or deployment commands
+3. keep local secret values outside the repo as files referenced by `*_FILE` variables
+4. set `ORCH_DRIVE_OAUTH_*_RUNTIME_FILE` only after you have a real Cloud Run copy/mount strategy for those files inside the container
+5. if you want an orchestrator dry-run without deploying the worker first, set `WORKER_URL` explicitly in `.env.local` for that preview
+6. source the loader before running local tooling or deployment commands
 
 Example commands:
 
@@ -610,14 +612,15 @@ cp .env.example .env.local
 source scripts/load_env.sh
 printf '%s\n' "$GIT_SHA" "$WORKER_IMAGE" "$ORCH_IMAGE"
 DRY_RUN=1 ./scripts/deploy_cloud_run.sh worker
-DRY_RUN=1 ./scripts/deploy_cloud_run.sh orchestrator
+WORKER_URL="https://your-worker-service-xxxx.a.run.app" DRY_RUN=1 ./scripts/deploy_cloud_run.sh orchestrator
 ./scripts/deploy_cloud_run.sh worker
+./scripts/deploy_cloud_run.sh both
 ```
 
 Compatibility notes:
 - the loader exports `PHASE12_*` compatibility aliases so the existing large-benchmark launcher can keep working without a coordinated rename
-- worker deploy is ready to use once the required project/image values are filled in
-- orchestrator deploy still requires operator verification for how Drive OAuth files will exist inside Cloud Run at the configured runtime paths
+- `WORKER_URL` no longer defaults to the old live service; when it is blank, orchestrator deploy resolves the current worker URL from Cloud Run instead of silently cross-wiring environments
+- orchestrator deploy now refuses to run until explicit runtime OAuth file paths are configured, so local host paths are not forwarded into Cloud Run by accident
 
 ## Repository and deployment notes
 
