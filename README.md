@@ -369,6 +369,7 @@ Additional safety hardening now in place:
 - duplicate `RunId` detection protects specific-run writeback and retained-history imports
 - specific `RunId` inspection/writeback can be triggered directly from the Apps Script UI control panel
 - writeback validates the selected raw row against the resolved nested Drive artifact before writing to `Sheet1`
+- writeback now also cross-checks `SnapshotFileSha256` against `run_manifest.json` and `ScorerFingerprint` against the resolved run artifact before using imported comparison metadata operationally
 
 ### Phase 5 — auto-writeback gating
 
