@@ -38,6 +38,10 @@ Current state:
 - derived benchmark grouping in `BENCHMARK_SUMMARY` implemented
 - imported best benchmark winner writeback to `Sheet1` rows 35–38 implemented
 - score-direction consistency fixed so lower scorer totals win end-to-end
+- benchmark UI seed override now supports blank = auto-generated campaign seed and filled = exact seed reuse
+- actual campaign seed is persisted through Apps Script/orchestrator state and surfaced back in the benchmark UI
+- campaign `RunId` generation is now globally unique for new runs and specific-`RunId` writeback is supported from the UI
+- scorer fingerprint metadata is now captured in campaign artifacts, imported raw rows, and benchmark summaries
 
 The system is usable in Google Sheets today.
 
@@ -246,6 +250,11 @@ Completed:
 - launcher campaign mode implemented
 - one campaign can run multiple trial counts across multiple repeats against one fixed exported snapshot
 - campaign planning and run identity made explicit
+- benchmark UI seed override now accepts either:
+  - blank input, which auto-generates a campaign seed
+  - an explicit positive integer override, which is used as-is
+- successful campaign start clears the seed override input while persisting the actual used campaign seed in UI/state
+- campaign start payload now carries the resolved seed explicitly so downstream artifacts can persist the real seed value
 
 ### Phase 13B — enriched campaign reporting and nested upload
 
@@ -255,12 +264,19 @@ Completed:
 - launcher can upload campaign folders and nested run artifacts to Drive
 - top-level `winner` in campaign report kept as a lean pointer
 - rich per-run metrics stored in matching `runs[]` entries
+- new campaign `RunId` generation now derives globally unique IDs for new runs, instead of only trial-count/repeat-local identity
+- scorer fingerprint metadata now propagates into per-run records and winner summaries
 
 Enriched per-run metrics now include:
 - `invocationMode`
 - `meanPoints`
 - `standardDeviation`
 - `range`
+- `seed`
+- `scorerFingerprint`
+- `scorerFingerprintShort`
+- `scorerFingerprintVersion`
+- `scorerSource`
 
 ### Phase 13C — campaign raw-run import into benchmark sheets
 
@@ -291,10 +307,23 @@ Current `BENCHMARK_TRIALS` raw row schema includes:
 - `Seed`
 - `RunFolderName`
 - `ArtifactFileName`
+- `ScorerFingerprint`
+- `ScorerFingerprintShort`
+- `ScorerFingerprintVersion`
+- `ScorerSource`
 - `MeanPoints`
 - `StandardDeviation`
 - `Range`
 - `TotalScore`
+- `PointBalanceGlobal`
+- `PointBalanceWithinSection`
+- `SpacingPenalty`
+- `CrReward`
+- `DualEligibleIcuBonus`
+- `StandbyAdjacencyPenalty`
+- `StandbyCountFairnessPenalty`
+- `PreLeavePenalty`
+- `UnfilledPenalty`
 - `SummaryMessage`
 - `FailureMessage`
 
@@ -322,6 +351,11 @@ Current operational note:
 - older campaign reports generated before the score-direction fix may still contain stale top-level winner pointers
 - Phase 13D does not rely on that top-level winner pointer
 - it recomputes the best imported winner directly from `BENCHMARK_TRIALS` by minimum `BestScore`
+
+Additional safety hardening now in place:
+- duplicate `RunId` detection protects specific-run writeback and retained-history imports
+- specific `RunId` inspection/writeback can be triggered directly from the Apps Script UI control panel
+- writeback validates the selected raw row against the resolved nested Drive artifact before writing to `Sheet1`
 
 ## Project structure
 
@@ -359,9 +393,10 @@ This repository is the version-controlled local source for the live Apps Script 
 
 Typical current workflow:
 1. Edit code locally
-2. Commit and push to GitHub
-3. Run `clasp push` to update Google Apps Script
-4. Run `clasp pull` first if the Apps Script project was changed remotely
+2. If Apps Script may have changed remotely, run `clasp pull` before local edits or before pushing
+3. Run your local checks
+4. Commit and push to GitHub
+5. Run `clasp push` to update Google Apps Script
 
 Important notes:
 - GitHub is source control
@@ -371,6 +406,20 @@ Important notes:
 - local tooling and non-Apps-Script folders must be excluded from Apps Script push via `.claspignore`
 
 Current `.claspignore` pattern should effectively allow only root-level Apps Script source files and the manifest, so local launcher folders and `node_modules` are not pushed into Apps Script.
+
+Recommended sync checklist:
+1. `git status --short --branch`
+2. `git pull --ff-only`
+3. `clasp status`
+4. if Apps Script was edited remotely, `clasp pull`
+5. if `clasp pull` changed tracked files, review and commit those changes before continuing
+6. re-run any local checks that depend on pulled Apps Script files
+7. `git push`
+8. `clasp push`
+
+Operational note:
+- this repository intentionally does not track `.clasp.json`
+- each workstation must be linked to the target Apps Script project locally before `clasp pull` / `clasp push` will work
 
 ## Allocation model
 
