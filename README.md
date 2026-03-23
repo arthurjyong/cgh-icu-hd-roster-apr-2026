@@ -35,13 +35,14 @@ Current state:
 - `benchmark_campaign_report_v1.json` implemented
 - nested per-run campaign artifact layout implemented under `runs/`
 - canonical raw per-run benchmark import into `BENCHMARK_TRIALS` implemented
-- derived benchmark grouping in `BENCHMARK_SUMMARY` implemented
+- comparison-group benchmark summary redesign in `BENCHMARK_SUMMARY` implemented
 - imported best benchmark winner writeback to `Sheet1` rows 35–38 implemented
 - score-direction consistency fixed so lower scorer totals win end-to-end
 - benchmark UI seed override now supports blank = auto-generated campaign seed and filled = exact seed reuse
 - actual campaign seed is persisted through Apps Script/orchestrator state and surfaced back in the benchmark UI
 - campaign `RunId` generation is now globally unique for new runs and specific-`RunId` writeback is supported from the UI
 - scorer fingerprint metadata is now captured in campaign artifacts, imported raw rows, and benchmark summaries
+- benchmark summary rows now isolate incomparable runs by comparison group instead of mixing them into one batch-level rollup
 
 The system is usable in Google Sheets today.
 
@@ -91,7 +92,7 @@ Apps Script currently handles:
 - validating transport-friendly trial results before sheet writeback
 - writing the best result back to the sheet
 - writing benchmark raw rows to `BENCHMARK_TRIALS`
-- writing grouped benchmark summaries to `BENCHMARK_SUMMARY`
+- writing comparison-group benchmark summaries to `BENCHMARK_SUMMARY`
 - writing imported benchmark winners to `Sheet1` rows 35–38
 
 Headless compute currently handles:
@@ -285,9 +286,21 @@ Completed:
 - report contract validation implemented
 - `runs[]` converted into one raw row per actual run
 - canonical raw per-run import into `BENCHMARK_TRIALS` implemented
-- grouped derived summary refresh into `BENCHMARK_SUMMARY` implemented
+- comparison-group derived summary refresh into `BENCHMARK_SUMMARY` implemented
 - latest and selected campaign import modes implemented
 - append and replace write modes implemented
+
+Current `BENCHMARK_SUMMARY` behavior:
+- rows are grouped by strict comparison group plus `TrialCount`
+- current strict comparison group is defined by:
+  - `SnapshotFileSha256`
+  - `ScorerFingerprint`
+- built-in Apps Script benchmark helper rows that do not persist `SnapshotFileSha256` are still aggregated by a documented fallback group:
+  - `CampaignBatchLabel`
+  - `InvocationMode`
+  - `ScorerFingerprint`
+- rows missing either field are isolated into singleton summary rows with explicit incomplete-metadata status, rather than being misleadingly aggregated with other runs
+- summary rows surface comparison metadata so users can see whether rows are actually comparable before interpreting score distributions
 
 Current `BENCHMARK_TRIALS` raw row schema includes:
 - `ImportTimestamp`
