@@ -2426,6 +2426,43 @@ function buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, includeTranspo
   return payload;
 }
 
+function updateBenchmarkUiAppliedMetadataFromSelection_(selection, sourceModeOverride) {
+  if (typeof writeBenchmarkUiAppliedRosterMetadata_ !== 'function') {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'WRITEBACK_UI_HELPER_UNAVAILABLE'
+    };
+  }
+
+  const candidate = selection && selection.candidateRow ? selection.candidateRow : {};
+  const sourceMode = trimmedStringOrBlank_(sourceModeOverride)
+    || trimmedStringOrBlank_(candidate.InvocationMode)
+    || trimmedStringOrBlank_(selection && selection.transportResult && selection.transportResult.invocationMode)
+    || 'BENCHMARK_WRITEBACK';
+
+  try {
+    writeBenchmarkUiAppliedRosterMetadata_({
+      lastAppliedBestScore: isFiniteNumberValue_(candidate.BestScore) ? Number(candidate.BestScore) : null,
+      lastAppliedRunId: trimmedStringOrBlank_(candidate.RunId),
+      lastAppliedCampaignFolder: trimmedStringOrBlank_(candidate.CampaignFolderName),
+      lastAppliedTimestamp: new Date(),
+      lastAppliedSourceMode: sourceMode
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'WRITEBACK_UI_METADATA_UPDATE_FAILED',
+      message: String(err && err.message ? err.message : err)
+    };
+  }
+
+  return {
+    ok: true
+  };
+}
+
 function debugInspectBenchmarkRunIdForWriteback(runId) {
   const selection = selectBenchmarkTrialsRunIdForWriteback_(runId);
   const payload = buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, false);
@@ -2436,9 +2473,16 @@ function debugInspectBenchmarkRunIdForWriteback(runId) {
 function runWriteBenchmarkRunIdToSheet(runId) {
   const selection = selectBenchmarkTrialsRunIdForWriteback_(runId);
   writeTransportTrialResultToSheet_(selection.transportResult);
+  const uiMetadataUpdate = updateBenchmarkUiAppliedMetadataFromSelection_(
+    selection,
+    'BENCHMARK_WRITEBACK_SPECIFIC_RUN_ID'
+  );
 
   const payload = buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, false);
   payload.message = 'Specified benchmark RunId written to Sheet1 rows 35-38.';
+  if (uiMetadataUpdate && uiMetadataUpdate.ok !== true) {
+    payload.uiMetadataUpdate = uiMetadataUpdate;
+  }
 
   Logger.log(JSON.stringify(payload, null, 2));
   return payload;
@@ -2455,9 +2499,16 @@ function debugInspectBestBenchmarkTrialsWinnerForWriteback() {
 function runWriteBestBenchmarkTrialsWinnerToSheet() {
   const selection = selectBestBenchmarkTrialsWinnerForWriteback_();
   writeTransportTrialResultToSheet_(selection.transportResult);
+  const uiMetadataUpdate = updateBenchmarkUiAppliedMetadataFromSelection_(
+    selection,
+    'BENCHMARK_WRITEBACK_CURRENT_BEST'
+  );
 
   const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false);
   payload.message = 'Best benchmark trials winner written to Sheet1 rows 35-38.';
+  if (uiMetadataUpdate && uiMetadataUpdate.ok !== true) {
+    payload.uiMetadataUpdate = uiMetadataUpdate;
+  }
 
   Logger.log(JSON.stringify(payload, null, 2));
   return payload;
