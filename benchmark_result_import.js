@@ -2431,39 +2431,160 @@ function buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, includeTranspo
 }
 
 function updateBenchmarkUiAppliedMetadataFromSelection_(selection, sourceModeOverride) {
-  if (typeof writeBenchmarkUiAppliedRosterMetadata_ !== 'function') {
-    return {
-      ok: false,
-      skipped: true,
-      reason: 'WRITEBACK_UI_HELPER_UNAVAILABLE'
-    };
-  }
-
   const candidate = selection && selection.candidateRow ? selection.candidateRow : {};
   const sourceMode = trimmedStringOrBlank_(sourceModeOverride)
     || trimmedStringOrBlank_(candidate.InvocationMode)
     || trimmedStringOrBlank_(selection && selection.transportResult && selection.transportResult.invocationMode)
     || 'BENCHMARK_WRITEBACK';
+  const metadataPayload = {
+    lastAppliedBestScore: isFiniteNumberValue_(candidate.BestScore) ? Number(candidate.BestScore) : null,
+    lastAppliedRunId: trimmedStringOrBlank_(candidate.RunId),
+    lastAppliedCampaignFolder: trimmedStringOrBlank_(candidate.CampaignFolderName),
+    lastAppliedTimestamp: new Date(),
+    lastAppliedSourceMode: sourceMode
+  };
+
+  const warnings = [];
+  let helperWriteError = null;
+  let usedHelper = false;
+  let usedFallback = false;
+
+  if (typeof writeBenchmarkUiAppliedRosterMetadata_ === 'function') {
+    try {
+      writeBenchmarkUiAppliedRosterMetadata_(metadataPayload);
+      usedHelper = true;
+    } catch (err) {
+      helperWriteError = String(err && err.message ? err.message : err);
+      warnings.push('writeBenchmarkUiAppliedRosterMetadata_ failed: ' + helperWriteError);
+    }
+  } else {
+    warnings.push('writeBenchmarkUiAppliedRosterMetadata_ unavailable; using SCORER_CONFIG fallback cells B35:B39.');
+  }
 
   try {
-    writeBenchmarkUiAppliedRosterMetadata_({
-      lastAppliedBestScore: isFiniteNumberValue_(candidate.BestScore) ? Number(candidate.BestScore) : null,
-      lastAppliedRunId: trimmedStringOrBlank_(candidate.RunId),
-      lastAppliedCampaignFolder: trimmedStringOrBlank_(candidate.CampaignFolderName),
-      lastAppliedTimestamp: new Date(),
-      lastAppliedSourceMode: sourceMode
-    });
+    if (!usedHelper) {
+      writeBenchmarkUiAppliedRosterMetadataFallback_(metadataPayload);
+      usedFallback = true;
+    }
   } catch (err) {
     return {
       ok: false,
-      skipped: true,
+      skipped: false,
       reason: 'WRITEBACK_UI_METADATA_UPDATE_FAILED',
-      message: String(err && err.message ? err.message : err)
+      message: String(err && err.message ? err.message : err),
+      warnings: warnings,
+      helperWriteError: helperWriteError,
+      helperAvailable: typeof writeBenchmarkUiAppliedRosterMetadata_ === 'function',
+      usedFallback: usedFallback
     };
   }
 
   return {
-    ok: true
+    ok: true,
+    warnings: warnings,
+    helperAvailable: typeof writeBenchmarkUiAppliedRosterMetadata_ === 'function',
+    usedHelper: usedHelper,
+    usedFallback: usedFallback
+  };
+}
+
+function writeBenchmarkUiAppliedRosterMetadataFallback_(payload) {
+  const metadata = payload || {};
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName('SCORER_CONFIG');
+  if (!sheet) {
+    throw new Error('SCORER_CONFIG sheet not found for fallback metadata write.');
+  }
+
+  const timestamp = metadata.lastAppliedTimestamp instanceof Date
+    ? metadata.lastAppliedTimestamp
+    : new Date();
+  const values = [
+    [
+      metadata.lastAppliedBestScore === null || metadata.lastAppliedBestScore === undefined
+        ? ''
+        : Number(metadata.lastAppliedBestScore)
+    ],
+    [trimmedStringOrBlank_(metadata.lastAppliedRunId)],
+    [trimmedStringOrBlank_(metadata.lastAppliedCampaignFolder)],
+    [timestamp],
+    [trimmedStringOrBlank_(metadata.lastAppliedSourceMode)]
+  ];
+
+  sheet.getRange('B35:B39').setValues(values);
+  sheet.getRange('B35').setNumberFormat('0');
+  sheet.getRange('B36:B37').setNumberFormat('@');
+  sheet.getRange('B38').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  sheet.getRange('B39').setNumberFormat('@');
+}
+
+function readBenchmarkUiAppliedRosterMetadataForWritebackLog_() {
+  if (typeof readBenchmarkUiAppliedRosterMetadata_ === 'function') {
+    try {
+      return {
+        ok: true,
+        source: 'writeBenchmarkUiAppliedRosterMetadata_',
+        metadata: readBenchmarkUiAppliedRosterMetadata_()
+      };
+    } catch (err) {
+      const helperReadError = String(err && err.message ? err.message : err);
+      try {
+        return {
+          ok: true,
+          source: 'SCORER_CONFIG!B35:B39',
+          metadata: readBenchmarkUiAppliedRosterMetadataFallback_(),
+          warning: 'readBenchmarkUiAppliedRosterMetadata_ failed; used SCORER_CONFIG fallback read.',
+          helperReadError: helperReadError
+        };
+      } catch (fallbackErr) {
+        return {
+          ok: false,
+          source: 'SCORER_CONFIG!B35:B39',
+          message: String(fallbackErr && fallbackErr.message ? fallbackErr.message : fallbackErr),
+          warning: 'readBenchmarkUiAppliedRosterMetadata_ failed and fallback read also failed.',
+          helperReadError: helperReadError
+        };
+      }
+    }
+  }
+
+  try {
+    return {
+      ok: true,
+      source: 'SCORER_CONFIG!B35:B39',
+      metadata: readBenchmarkUiAppliedRosterMetadataFallback_()
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      source: 'SCORER_CONFIG!B35:B39',
+      message: String(err && err.message ? err.message : err)
+    };
+  }
+}
+
+function readBenchmarkUiAppliedRosterMetadataFallback_() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName('SCORER_CONFIG');
+  if (!sheet) {
+    throw new Error('SCORER_CONFIG sheet not found for fallback metadata read.');
+  }
+
+  const values = sheet.getRange('B35:B39').getValues();
+  const bestScoreRaw = values[0] && values[0].length ? values[0][0] : '';
+  const bestScoreNormalized = trimmedStringOrBlank_(bestScoreRaw);
+  let bestScore = null;
+  if (bestScoreNormalized !== '') {
+    const parsedBestScore = Number(bestScoreNormalized);
+    bestScore = Number.isFinite(parsedBestScore) ? parsedBestScore : null;
+  }
+
+  return {
+    lastAppliedBestScore: bestScore,
+    lastAppliedRunId: trimmedStringOrBlank_(values[1] && values[1].length ? values[1][0] : ''),
+    lastAppliedCampaignFolder: trimmedStringOrBlank_(values[2] && values[2].length ? values[2][0] : ''),
+    lastAppliedTimestamp: values[3] && values[3].length ? values[3][0] : '',
+    lastAppliedSourceMode: trimmedStringOrBlank_(values[4] && values[4].length ? values[4][0] : '')
   };
 }
 
@@ -2484,8 +2605,10 @@ function runWriteBenchmarkRunIdToSheet(runId) {
 
   const payload = buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, false);
   payload.message = 'Specified benchmark RunId written to Sheet1 rows 35-38.';
+  payload.uiMetadataUpdate = uiMetadataUpdate;
+  payload.appliedMetadataAfterWriteback = readBenchmarkUiAppliedRosterMetadataForWritebackLog_();
   if (uiMetadataUpdate && uiMetadataUpdate.ok !== true) {
-    payload.uiMetadataUpdate = uiMetadataUpdate;
+    payload.warning = 'Roster writeback succeeded, but metadata update had warnings/failure details.';
   }
 
   Logger.log(JSON.stringify(payload, null, 2));
@@ -2510,8 +2633,10 @@ function runWriteBestBenchmarkTrialsWinnerToSheet() {
 
   const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false);
   payload.message = 'Best benchmark trials winner written to Sheet1 rows 35-38.';
+  payload.uiMetadataUpdate = uiMetadataUpdate;
+  payload.appliedMetadataAfterWriteback = readBenchmarkUiAppliedRosterMetadataForWritebackLog_();
   if (uiMetadataUpdate && uiMetadataUpdate.ok !== true) {
-    payload.uiMetadataUpdate = uiMetadataUpdate;
+    payload.warning = 'Roster writeback succeeded, but metadata update had warnings/failure details.';
   }
 
   Logger.log(JSON.stringify(payload, null, 2));
