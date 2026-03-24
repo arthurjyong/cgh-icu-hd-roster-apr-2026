@@ -88,6 +88,16 @@ function buildBenchmarkUiTargetMaxTrialCountValidationForRange_(targetRange) {
     .build();
 }
 
+function getBenchmarkUiAppliedRosterMetadataLabelRows_() {
+  return [
+    "Last applied best score",
+    "Last applied run ID",
+    "Last applied campaign folder",
+    "Last applied timestamp",
+    "Last applied source mode"
+  ];
+}
+
 
 function getBenchmarkUiNamedRangeTargetA1Map_() {
   return {
@@ -388,7 +398,7 @@ function initializeBenchmarkUiControls_() {
 
   const bestRunIdRange = resolveBenchmarkUiControlRange_('bestRunId');
   bestRunIdRange.setNumberFormat('@');
-  bestRunIdRange.setWrap(true);
+  bestRunIdRange.setWrap(false);
 
   const specificRunIdRange = ensureBenchmarkUiTextControlPlaceholder_(
     'specificRunId',
@@ -411,6 +421,15 @@ function initializeBenchmarkUiControls_() {
   lastAppliedCampaignFolderRange.setNumberFormat('@');
   lastAppliedTimestampRange.setNumberFormat('yyyy-mm-dd hh:mm:ss');
   lastAppliedSourceModeRange.setNumberFormat('@');
+
+  const metadataLabelRange = getBenchmarkUiSheet_().getRange('A35:A39');
+  const metadataLabels = getBenchmarkUiAppliedRosterMetadataLabelRows_().map(function(label) {
+    return [label];
+  });
+  metadataLabelRange.setValues(metadataLabels);
+  metadataLabelRange.setHorizontalAlignment('right');
+
+  getBenchmarkUiSheet_().getRange('B26:B39').setHorizontalAlignment('left');
 
   bestRunIdRange.setNote('LOWER IS BETTER.');
   resolveBenchmarkUiControlRange_('bestScore').setNote('LOWER IS BETTER.');

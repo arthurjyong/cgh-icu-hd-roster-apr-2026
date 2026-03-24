@@ -241,7 +241,49 @@ function ensureBenchmarkSheet_(sheetName, headerRow) {
     sheet.getRange(1, 1, 1, headerRow.length).setFontWeight("bold");
   }
 
+  applyBenchmarkSheetFormatting_(sheet);
+
   return sheet;
+}
+
+function applyBenchmarkHeaderFormatting_(sheet, columnCount) {
+  if (!sheet || !columnCount || columnCount < 1) {
+    return;
+  }
+
+  sheet.getRange(1, 1, 1, columnCount)
+    .setVerticalAlignment("top")
+    .setWrap(true);
+}
+
+function applyBenchmarkReviewNumberFormatting_(sheet) {
+  if (!sheet) {
+    return;
+  }
+
+  sheet.getRange("I:R").setNumberFormat("0.############");
+  sheet.getRange("F:F").setNumberFormat("0.00");
+  sheet.getRange("G:G").setNumberFormat("0.00");
+  sheet.getRange("H:H").setNumberFormat("0.00");
+  sheet.getRange("S:S").setNumberFormat("0.00");
+}
+
+function applyBenchmarkSheetFormatting_(sheet) {
+  if (!sheet) {
+    return;
+  }
+
+  const sheetName = sheet.getName();
+
+  if (sheetName === getBenchmarkTrialsSheetName_()) {
+    applyBenchmarkHeaderFormatting_(sheet, getBenchmarkTrialsHeader_().length);
+    return;
+  }
+
+  if (sheetName === getBenchmarkReviewSheetName_()) {
+    applyBenchmarkHeaderFormatting_(sheet, getBenchmarkReviewHeader_().length);
+    applyBenchmarkReviewNumberFormatting_(sheet);
+  }
 }
 
 function ensureBenchmarkTrialsSheet_() {
@@ -292,6 +334,7 @@ function writeBenchmarkSheetHeaderRow_(sheet, headerRow) {
   sheet.getRange(1, 1, 1, headerRow.length).setValues([headerRow]);
   sheet.setFrozenRows(1);
   sheet.getRange(1, 1, 1, headerRow.length).setFontWeight("bold");
+  applyBenchmarkSheetFormatting_(sheet);
 }
 
 function migrateLegacyBenchmarkTrialsSheetForAppend_(sheet) {
@@ -382,6 +425,8 @@ function resetBenchmarkSheets() {
 
   trialsSheet.getRange(1, 1, 1, trialsHeader.length).setFontWeight("bold");
   reviewSheet.getRange(1, 1, 1, reviewHeader.length).setFontWeight("bold");
+  applyBenchmarkSheetFormatting_(trialsSheet);
+  applyBenchmarkSheetFormatting_(reviewSheet);
 
   Logger.log("Benchmark sheets reset.");
 }
@@ -864,6 +909,7 @@ function refreshBenchmarkReviewSheet() {
   reviewSheet.getRange(1, 1, 1, header.length).setValues([header]);
   reviewSheet.setFrozenRows(1);
   reviewSheet.getRange(1, 1, 1, header.length).setFontWeight("bold");
+  applyBenchmarkSheetFormatting_(reviewSheet);
 
   if (rows.length > 0) {
     reviewSheet.getRange(2, 1, rows.length, header.length).setValues(rows);
