@@ -1775,6 +1775,10 @@ function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
   const rows = Array.isArray(candidates) ? candidates : [];
   const options = scopeOptions || {};
   const requestedComparisonGroupKey = trimmedStringOrBlank_(options.comparisonGroupKey);
+  const scopeSelectionSource = trimmedStringOrBlank_(options.scopeSelectionSource);
+  const isUiDefaultScope =
+    scopeSelectionSource === 'BENCHMARK_UI_CONTROL_PANEL' ||
+    scopeSelectionSource === 'UI_DEFAULT_COMPARISON_GROUP_KEY';
   const recoveryMessage = buildBenchmarkTrialsWritebackScopeRecoveryMessage_(requestedComparisonGroupKey);
 
   if (rows.length === 0) {
@@ -1793,15 +1797,30 @@ function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
     });
 
     if (scopedGroup.length === 0) {
-      throw new Error(
-        'Requested comparison group "' + requestedComparisonGroupKey + '" was not found among valid BENCHMARK_TRIALS writeback candidates. ' +
-        'The saved scope may be stale after a REPLACE import or no longer present among valid rows. ' +
-        recoveryMessage
-      );
+      if (isUiDefaultScope) {
+        if (groups.length === 1 && groups[0] && groups[0].comparisonStatus === "STRICT") {
+          selectedGroup = groups[0];
+          selectionMode = "AUTO_RECOVERED_FROM_STALE_UI_DEFAULT";
+        } else {
+          throw new Error(
+            'Saved default comparison group "' + requestedComparisonGroupKey + '" is stale and no single strict fallback group could be chosen automatically. ' +
+            recoveryMessage +
+            ' Groups in scope: ' +
+            groups.slice(0, 3).map(formatBenchmarkTrialsWritebackComparisonGroupForError_).join(" | ") +
+            (groups.length > 3 ? " | ..." : "")
+          );
+        }
+      } else {
+        throw new Error(
+          'Requested comparison group "' + requestedComparisonGroupKey + '" was not found among valid BENCHMARK_TRIALS writeback candidates. ' +
+          'The saved scope may be stale after a REPLACE import or no longer present among valid rows. ' +
+          recoveryMessage
+        );
+      }
+    } else {
+      selectedGroup = scopedGroup[0];
+      selectionMode = "EXPLICIT_COMPARISON_GROUP_KEY";
     }
-
-    selectedGroup = scopedGroup[0];
-    selectionMode = "EXPLICIT_COMPARISON_GROUP_KEY";
   } else {
     if (groups.length > 1) {
       throw new Error(

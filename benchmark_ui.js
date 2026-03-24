@@ -66,6 +66,13 @@ function getBenchmarkUiAllowedTargetMaxTrialCounts_() {
   return [];
 }
 
+function getBenchmarkUiTargetMaxTrialCountBounds_() {
+  return {
+    min: 5000,
+    max: 10000000
+  };
+}
+
 
 function getBenchmarkUiNamedRangeTargetA1Map_() {
   return {
@@ -197,6 +204,13 @@ function parseBenchmarkUiTargetMaxTrialCount_(rawValue) {
 
   if (numeric <= 0) {
     throw new Error('Target max trial count must be a positive integer.');
+  }
+
+  const bounds = getBenchmarkUiTargetMaxTrialCountBounds_();
+  if (numeric < bounds.min || numeric > bounds.max) {
+    throw new Error(
+      'Target max trial count must be between ' + bounds.min + ' and ' + bounds.max + ' (inclusive).'
+    );
   }
 
   return numeric;
@@ -343,8 +357,15 @@ function ensureBenchmarkUiTextControlPlaceholder_(controlKey, placeholder) {
 function initializeBenchmarkUiControls_() {
   const installResult = installBenchmarkUiNamedRanges_();
   const targetRange = resolveBenchmarkUiControlRange_('targetMaxTrialCount');
+  const bounds = getBenchmarkUiTargetMaxTrialCountBounds_();
+  const targetA1 = targetRange.getA1Notation();
   const validation = SpreadsheetApp.newDataValidation()
-    .requireNumberGreaterThanOrEqualTo(1)
+    .requireFormulaSatisfied(
+      '=AND(ISNUMBER(' + targetA1 + '),' +
+      targetA1 + '=INT(' + targetA1 + '),' +
+      targetA1 + '>=' + bounds.min + ',' +
+      targetA1 + '<=' + bounds.max + ')'
+    )
     .setAllowInvalid(false)
     .build();
 
