@@ -141,6 +141,11 @@ function getBenchmarkSummaryHeader_() {
 
 function getBenchmarkReviewHeader_() {
   return [
+    "OperationalState",
+    "StatusSource",
+    "Freshness",
+    "ReconciliationState",
+    "Warning",
     "ChunkCompletedAt",
     "RunId",
     "TrialCount",
@@ -163,6 +168,28 @@ function getBenchmarkReviewHeader_() {
     "FailureMessage",
     "ScorerFingerprintShort"
   ];
+}
+
+function readBenchmarkReviewOperationalProjection_() {
+  const fallback = {
+    OperationalState: "",
+    StatusSource: "",
+    Freshness: "",
+    ReconciliationState: "",
+    Warning: ""
+  };
+
+  try {
+    fallback.OperationalState = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("status").getValue());
+    fallback.StatusSource = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("statusSource").getValue());
+    fallback.Freshness = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("freshness").getValue());
+    fallback.ReconciliationState = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("reconciliationState").getValue());
+    fallback.Warning = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("warning").getValue());
+  } catch (_err) {
+    // Keep SEARCH_PROGRESS refresh resilient even when UI controls are not installed yet.
+  }
+
+  return fallback;
 }
 
 function getBenchmarkTrialsColumnMap_() {
@@ -851,6 +878,7 @@ function buildBenchmarkReviewRows_() {
   const actualHeader = trialsSheet.getRange(1, 1, 1, lastColumn).getValues()[0];
   const headerMap = buildHeaderIndexMapFromRow_(actualHeader);
   const trialValues = trialsSheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
+  const operationalProjection = readBenchmarkReviewOperationalProjection_();
 
   return trialValues.map(function(sourceRow) {
     const rowObject = {};
@@ -864,6 +892,11 @@ function buildBenchmarkReviewRows_() {
     }
 
     return {
+      OperationalState: safeReviewCellValue_(operationalProjection.OperationalState),
+      StatusSource: safeReviewCellValue_(operationalProjection.StatusSource),
+      Freshness: safeReviewCellValue_(operationalProjection.Freshness),
+      ReconciliationState: safeReviewCellValue_(operationalProjection.ReconciliationState),
+      Warning: safeReviewCellValue_(operationalProjection.Warning),
       ChunkCompletedAt: safeReviewCellValue_(rowObject.ImportTimestamp),
       RunId: safeReviewCellValue_(rowObject.RunId),
       TrialCount: safeReviewCellValue_(rowObject.TrialCount),
