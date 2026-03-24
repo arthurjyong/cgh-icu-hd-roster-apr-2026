@@ -2135,8 +2135,21 @@ function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportR
   }
 
   if (trimmedStringOrBlank_(rowObject.InvocationMode) && transportInvocationMode) {
-    if (trimmedStringOrBlank_(rowObject.InvocationMode) !== transportInvocationMode) {
-      issues.push("Selected BENCHMARK_TRIALS InvocationMode does not match transport invocationMode.");
+    const rowInvocationMode = normalizeBenchmarkInvocationModeForComparison_(rowObject.InvocationMode);
+    const transportInvocationModeForCompare = normalizeBenchmarkInvocationModeForComparison_(transportInvocationMode);
+
+    if (
+      rowInvocationMode.mode
+      && transportInvocationModeForCompare.mode
+      && rowInvocationMode.mode !== transportInvocationModeForCompare.mode
+      && rowInvocationMode.isKnownTrialComputeMode
+      && transportInvocationModeForCompare.isKnownTrialComputeMode
+    ) {
+      issues.push(
+        'Selected BENCHMARK_TRIALS InvocationMode does not match transport invocationMode. '
+        + 'Row InvocationMode="' + rowInvocationMode.raw + '", transport invocationMode="'
+        + transportInvocationModeForCompare.raw + '".'
+      );
     }
   }
 
@@ -2149,6 +2162,22 @@ function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportR
     : {
         ok: true
       };
+}
+
+function normalizeBenchmarkInvocationModeForComparison_(value) {
+  const raw = trimmedStringOrBlank_(value);
+  const mode = raw.toUpperCase();
+  const knownTrialComputeModes = {
+    LOCAL_DIRECT: true,
+    LOCAL_SIMULATED_EXTERNAL: true,
+    EXTERNAL_HTTP: true
+  };
+
+  return {
+    raw: raw,
+    mode: mode,
+    isKnownTrialComputeMode: !!knownTrialComputeModes[mode]
+  };
 }
 
 function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
