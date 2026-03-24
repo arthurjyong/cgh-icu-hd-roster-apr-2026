@@ -207,21 +207,17 @@ function parseBenchmarkUiTargetMaxTrialCount_(rawValue) {
 
 function buildBenchmarkTrialCountsUpToTarget_(targetMaxTrialCount) {
   const target = parseBenchmarkUiTargetMaxTrialCount_(targetMaxTrialCount);
-  const allowed = getBenchmarkUiAllowedTargetMaxTrialCounts_();
-  const ladder = [];
-
-  for (let i = 0; i < allowed.length; i++) {
-    const value = allowed[i];
-    if (value <= target) {
-      ladder.push(value);
-    }
+  const chunkSize = 1000;
+  if (target <= chunkSize) {
+    return [target];
   }
 
-  if (ladder.length === 0 || ladder[ladder.length - 1] !== target) {
-    throw new Error('Failed to expand ladder to target max trial count: ' + target);
+  const remainder = target % chunkSize;
+  if (remainder > 0) {
+    return [chunkSize, remainder];
   }
 
-  return ladder;
+  return [chunkSize];
 }
 
 function readBenchmarkUiTargetMaxTrialCount_() {
