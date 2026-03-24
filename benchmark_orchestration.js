@@ -388,6 +388,9 @@ function buildBenchmarkStatusProjectionState_(payload) {
   if (backendStatus === activeStatuses.cancelled) {
     return 'CANCELLED';
   }
+  if (reconciliationState === 'DESYNC') {
+    return 'DESYNC_DETECTED';
+  }
   if (backendStatus === activeStatuses.complete) {
     if (!importAttempted) {
       return 'BACKEND_COMPLETE_UNIMPORTED';
@@ -748,6 +751,22 @@ function pollActiveBenchmarkCampaign_() {
 
   const storedStatusUpper = normalizeBenchmarkOrchestrationString_(state.status).toUpperCase();
   const activeStatuses = getBenchmarkOrchestrationDefaults_().activeStatusValues;
+  if (storedStatusUpper === 'STOPPED') {
+    ensureBenchmarkCampaignPollTriggerHygiene_(false);
+    writeBenchmarkUiOperationalHealth_({
+      statusSource: 'MANUAL_STOP',
+      freshness: 'UNKNOWN',
+      reconciliationState: 'UNKNOWN',
+      warning: 'Polling is manually stopped.',
+      lastBackendConfirmedAt: ''
+    });
+    return {
+      ok: true,
+      skipped: true,
+      message: 'Polling is manually stopped.'
+    };
+  }
+
   if (
     storedStatusUpper === activeStatuses.complete ||
     storedStatusUpper === activeStatuses.failed ||
