@@ -1,176 +1,213 @@
 # CGH ICU/HD Roster Allocator
 
-This repository contains a **Google Sheets + Apps Script monthly roster allocator** for ICU/HD call scheduling, plus optional external compute services for large trial runs.
+This repository contains a Google Sheets + Apps Script roster allocation system for monthly ICU/HD call planning. It reads the roster month from `Sheet1`, enforces hard eligibility/availability constraints, searches many valid allocations, scores them (lower is better), and writes a chosen roster back to the sheet. For larger runs, the same compute path can be executed through an external HTTP worker and an optional campaign orchestrator.
 
-## What this code does
+## What this system does
 
 At a high level:
 
-1. Reads a roster month from Google Sheets.
-2. Parses doctor eligibility, requests, and constraints.
-3. Builds valid candidate pools for each date and slot.
-4. Runs allocation (greedy or random trials).
-5. Scores allocations for fairness/cost.
-6. Writes the selected allocation back to the sheet.
+1. Read monthly roster inputs from the sheet (`Sheet1`).
+2. Parse doctor master rows, request codes, and day-level point values.
+3. Build per-day candidate pools for four slots:
+   - `MICU_CALL`
+   - `MICU_STANDBY`
+   - `MHD_CALL`
+   - `MHD_STANDBY`
+4. Generate allocations (single run or many random trials).
+5. Score each valid allocation with configured scorer weights.
+6. Write selected assignments back to `Sheet1` rows `35`–`38` from column `B` onward.
 
-Primary slots:
-- `MICU_CALL`
-- `MICU_STANDBY`
-- `MHD_CALL`
-- `MHD_STANDBY`
+## Current architecture (boundaries and responsibilities)
 
-Sheet writeback target:
-- `Sheet1` rows `35`–`38`, columns from `B` onward.
+### 1) Apps Script controller + sheet I/O
 
-## Core principles and assumptions
+- `Code.js` exposes menu actions and operational entrypoints.
+- Parser + writer modules are Apps Script-facing boundaries:
+  - Parse sheet: `parser_*.js`
+  - Write output: `writer_output.js`
+- Benchmark UI/state inside sheet tabs and named ranges:
+  - `benchmark_ui.js`
+  - `benchmark_trials.js`
 
-The engine is built around a few assumptions:
+### 2) Shared compute runtime (pure logic)
 
-- **Validity first**: only candidates that pass eligibility/blocking constraints are considered.
-- **Cost minimization**: scoring is treated as a penalty score where **lower is better**.
-- **Determinism when seeded**: random-trial runs are reproducible with the same seed + snapshot.
-- **Separation of concerns**:
-  - Apps Script handles sheet I/O and orchestration.
-  - Pure compute modules handle candidate generation, allocation, and scoring.
-- **Contracted boundaries**: request/response payloads between orchestrators/workers are explicit versioned JSON contracts.
+These files contain the allocation/scoring/snapshot contracts reused by Apps Script and worker loading:
 
-## Runtime modes
+- Snapshot contract build/validation: `engine_snapshot.js`
+- Headless random trials and transport contract: `engine_runner.js`
+- Candidate building and allocation rules: `allocator_*.js`
+- Scoring and scorer identity/fingerprint: `scorer_*.js`
 
-The same compute path can be invoked in three ways:
+### 3) External worker (stateless HTTP compute)
 
-- `LOCAL_DIRECT`
-  - Apps Script invokes headless compute directly.
-- `LOCAL_SIMULATED_EXTERNAL`
-  - Apps Script performs JSON clone-in/clone-out to simulate HTTP boundaries.
-- `EXTERNAL_HTTP`
-  - Apps Script posts snapshot JSON to the worker (`/run-random-trials`) and validates transport response.
+- `worker/server.js` exposes:
+  - `GET /healthz`
+  - `POST /run-random-trials`
+- Worker validates bearer token, validates snapshot request contract, runs headless trials, and returns transport result JSON.
+- Worker loads compute modules via `worker/load_pure_compute.js`.
 
-## Repository map
+### 4) Orchestrator (campaign runner)
 
-### Apps Script / shared compute modules
+- `orchestrator/server.js` exposes campaign start/status APIs.
+- It can download snapshot artifacts from Drive, execute campaign runs through the local launcher path, and track status files (`benchmark_campaign_status_v1`).
+- Core loop/state helpers:
+  - `orchestrator/run_campaign.js`
+  - `orchestrator/campaign_state.js`
+  - `orchestrator/drive_snapshot.js`
 
-- `Code.js` — user-facing menu actions and entrypoints.
-- `parser_*.js` — sheet parsing and normalization.
-- `allocator_*.js` — candidate pool building and allocation logic.
-- `scorer_*.js` — scoring logic + weights/fingerprint behavior.
-- `engine_snapshot.js` — `compute_snapshot_v2` build/validation path.
-- `engine_runner.js` — headless random-trial execution + transport result building.
-- `engine_invoke.js` — invocation mode switching and external HTTP handling.
-- `writer_output.js` — validation + writeback to sheet rows 35–38.
-- `benchmark_*.js` — benchmark export/import and sheet reporting flows.
+### 5) Local launcher (large benchmark execution)
 
-### Worker service
+- `tools/phase12_large_benchmark/run_phase12_large_benchmark.js`
+- Companion `launcher_*.js` modules handle config, chunk planning, HTTP calls, consolidation, checkpointing, and optional Drive upload.
+- Supports single-run and campaign execution modes.
 
-- `worker/server.js` — authenticated HTTP compute endpoint.
-- `worker/load_pure_compute.js` — dynamic load of pure compute runtime.
-- `worker/Dockerfile` — worker image build.
+## Sheet model and operational contract
 
-### Orchestrator service
+Documented here only from current parser/writer code:
 
-- `orchestrator/server.js` — campaign lifecycle API for long benchmark campaigns.
-- `orchestrator/run_campaign.js` — campaign execution loop and state updates.
-- `orchestrator/drive_snapshot.js` — Drive snapshot retrieval helpers.
-- `orchestrator/campaign_state.js` — status/state persistence.
-- `orchestrator/Dockerfile` — orchestrator image build.
+- Primary roster sheet is `Sheet1`.
+- Calendar header is read from `B1:AC1`; weekday row from `B2:AC2`.
+- Doctor blocks are sectioned and row-based:
+  - ICU-only names/requests: `A4:A11`, `B4:AC11`
+  - ICU/HD names/requests: `A14:A20`, `B14:AC20`
+  - HD-only names/requests: `A23:A30`, `B23:AC30`
+- Call points rows:
+  - MICU points: `B32:AC32`
+  - MHD points: `B33:AC33`
+- Output writeback rows:
+  - `MICU_CALL` -> row `35`
+  - `MICU_STANDBY` -> row `36`
+  - `MHD_CALL` -> row `37`
+  - `MHD_STANDBY` -> row `38`
+- Hard constraints are applied before soft fairness/preferences:
+  - Slot eligibility by doctor section.
+  - Same-day hard blocks from request codes.
+  - No same-doctor double-slot on same day.
+  - No call-slot assignment on consecutive days for the same doctor.
 
-### Local benchmark launcher
+## Main workflows
 
-- `tools/phase12_large_benchmark/run_phase12_large_benchmark.js` — local CLI launcher.
-- `tools/phase12_large_benchmark/launcher_*.js` — planning, chunking, HTTP invoke, consolidation, checkpointing, artifact upload.
+### A) Normal in-sheet operation
 
-### Deployment/environment scripts
+1. Open sheet-bound Apps Script menu (`Operational Search`).
+2. Use benchmark UI/control actions from `Code.js` menu handlers.
+3. Inspect candidate winner and apply selected run to `Sheet1`.
 
-- `scripts/load_env.sh` — canonical env loading + alias compatibility.
-- `scripts/deploy_cloud_run.sh` — deploy worker/orchestrator images to Cloud Run.
+Primary writeback flows are:
+- `runWriteBestBenchmarkTrialsWinnerToSheet`
+- `runWriteBenchmarkRunIdToSheet`
+- `runWriteBestRandomTrialToSheetWithInvocationOptions_` (direct/simulated/external modes)
 
-## Data contracts
+### B) External large-run benchmark flow
 
-### Input
+1. Export snapshot from Apps Script (`benchmark_snapshot_export.js`).
+2. Run local launcher and/or orchestrator campaign execution.
+3. Produce campaign artifacts (including transport results/report JSON).
+4. Import selected/latest campaign report into sheet benchmark tables (`benchmark_result_import.js`).
+5. Review winner and apply to `Sheet1`.
+
+### C) Developer workflow
+
+1. Edit locally and validate behavior.
+2. Commit/push via git.
+3. Deploy Apps Script files with `clasp` only when Apps Script sources changed.
+4. Deploy worker/orchestrator separately for external compute changes.
+
+### D) Cloud deployment workflow (high level)
+
+1. Configure env files (`.env.shared` + `.env.local`).
+2. Source canonical loader:
+   - `source scripts/load_env.sh`
+3. Deploy Cloud Run services via:
+   - `scripts/deploy_cloud_run.sh worker|orchestrator|both`
+
+## Environment and configuration
+
+### Env file roles
+
+- `.env.shared`: checked-in non-sensitive defaults and variable names.
+- `.env.example`: template for local machine-specific values (copy to `.env.local`).
+- `.env.local`: local overrides + sensitive pointers (not committed).
+
+### Secrets and file indirection
+
+- Keep secret values/files outside the repo.
+- `scripts/load_env.sh` is the canonical loader and compatibility layer.
+- It supports `*_FILE` indirection (e.g., worker/orchestrator token files) and exports compatibility aliases for launcher/orchestrator flows.
+
+### Key external config domains
+
+- Worker endpoint/token.
+- Orchestrator endpoint/token.
+- Drive OAuth credential/token file paths.
+- Drive folder IDs (`root`, `benchmark_runs`, optional names).
+- Cloud Run deploy knobs (service name, image, region, resources).
+
+## Contracts and terminology
+
+Current versioned payload/contracts in active code paths:
 
 - `compute_snapshot_v2`
-  - top-level shape includes:
-    - `contractVersion`
-    - `trialSpec`
-    - `inputs`
-    - `scorer`
-    - `metadata`
-
-### Headless internal result
-
+  - Snapshot payload sent to compute runtime/worker.
 - `headless_random_trials_result_v2`
-
-### Transport result
-
+  - Internal headless compute result.
 - `transport_trial_result_v1`
+  - Response/transport payload used for validation and writeback.
+- `benchmark_campaign_status_v1`
+  - Orchestrator campaign status file contract.
 
-Notes:
-- Worker response validation is strict before writeback.
-- Writeback currently requires `bestAllocation` in transport payload.
+## Repository map (quick navigation)
 
-## Typical workflows
+### Apps Script entrypoints and I/O
+- `Code.js`
+- `appsscript.json`
+- `writer_output.js`
 
-### In-sheet allocation (normal use)
+### Parse / allocate / score / engine
+- `parser_*.js`
+- `allocator_*.js`
+- `scorer_*.js`
+- `engine_snapshot.js`
+- `engine_invoke.js`
+- `engine_runner.js`
 
-Use Apps Script menu/actions in `Code.js`:
-- run best random trial and write to sheet
-- inspect/import benchmark winners
-- apply current/specific winner to `Sheet1`
+### Benchmark export/import/orchestration inside Apps Script
+- `benchmark_snapshot_export.js`
+- `benchmark_result_import.js`
+- `benchmark_orchestration.js`
+- `benchmark_ui.js`
+- `benchmark_trials.js`
+- `benchmark_drive_config.js`
 
-### Large external benchmarking
+### External services
+- `worker/*`
+- `orchestrator/*`
 
-Recommended for very high trial counts:
+### Local campaign tooling
+- `tools/phase12_large_benchmark/*`
 
-1. Export snapshot from Apps Script.
-2. Run local launcher to execute chunked campaign against worker.
-3. Upload campaign artifacts to Drive.
-4. Import campaign report back into benchmark tables.
-5. Apply winning roster back to sheet.
+### Scripts
+- `scripts/load_env.sh`
+- `scripts/deploy_cloud_run.sh`
 
-### UI-driven external campaign smoke test
+## Operational guardrails
 
-1. Open the benchmark controls in the bound Google Sheet and set a valid target max trial count.
-2. Click **Generate Rosters** to start the external campaign flow from the UI.
-3. If `BENCHMARK_TRIALS` is missing, the UI start flow auto-runs `resetBenchmarkSheets()` before launch; if only `BENCHMARK_SUMMARY` and/or `BENCHMARK_REVIEW` are missing, the UI start flow rebuilds just those derived tabs.
-4. Confirm campaign status transitions to running and that campaign metadata is populated in the UI status cells.
+- Score direction is **lower is better**.
+- Hard validity rules take priority over soft preference/fairness scoring.
+- External mode requires valid auth tokens and configured endpoints.
+- Writeback requires a valid `transport_trial_result_v1` with `bestAllocation` present.
+- For execution tracing, start from controller entrypoints and follow engine boundaries (below).
 
-## Optimization review (clear opportunities)
+## Getting oriented quickly
 
-After reviewing the repository, the highest-value optimizations are:
+Recommended trace path for first read:
 
-1. **Batch writeback in `writer_output.js`**
-   - Current implementation performs one `setValues` call per slot row.
-   - Can be reduced to one contiguous `setValues` call for rows 35–38 to reduce Apps Script round-trips.
-
-2. **Cache loaded runtime in `worker/server.js`**
-   - Worker currently reloads pure compute runtime on each request path.
-   - In-process memoization of the loaded runtime can cut per-request overhead.
-
-3. **Avoid pretty-print JSON in hot HTTP responses**
-   - `sendJson` currently uses `JSON.stringify(..., null, 2)` in worker/orchestrator.
-   - Switching to compact JSON in non-debug paths reduces payload size and CPU.
-
-4. **Reduce repeated deep cloning in simulated mode**
-   - `LOCAL_SIMULATED_EXTERNAL` intentionally clones request/response boundaries.
-   - Keep for contract testing, but avoid for performance-sensitive paths where not needed.
-
-These are engineering refinements; current behavior and functional flow are already coherent.
-
-## Minimal operational prerequisites
-
-- Google Sheet configured with expected structure and named ranges.
-- Apps Script project bound to the sheet with these files deployed.
-- For external mode:
-  - Cloud Run worker URL and token configured in Script Properties.
-- For campaign/orchestrator flows:
-  - Drive OAuth credentials/tokens available.
-  - Drive root + benchmark run folder IDs configured.
-
-## Security and operational notes
-
-- Worker and orchestrator both expect Bearer token auth.
-- Snapshot/transport contract validation is enforced before compute/writeback.
-- Keep secret material in env/secret files (see `scripts/load_env.sh`) rather than hardcoding in script files.
-
----
-
-If you are onboarding: start at `Code.js` (menu entrypoints), then follow `engine_snapshot.js` → `engine_invoke.js` → `engine_runner.js` → `writer_output.js`.
+1. `Code.js` (menu actions and high-level flow)
+2. `engine_snapshot.js` (build snapshot contract)
+3. `engine_invoke.js` (local direct/simulated/external dispatch)
+4. `engine_runner.js` (headless random trials + transport contract)
+5. `writer_output.js` (writeback validation and sheet output)
+6. Benchmark path:
+   - export: `benchmark_snapshot_export.js`
+   - run: `tools/phase12_large_benchmark/*` and/or `orchestrator/*`
+   - import/apply: `benchmark_result_import.js` + benchmark UI actions in `Code.js`
