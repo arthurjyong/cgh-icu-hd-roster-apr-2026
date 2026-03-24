@@ -342,7 +342,49 @@ function buildCompactBenchmarkCampaignStateSummary_(state) {
   };
 }
 
+function ensureBenchmarkTabsCompleteOrReset_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const trialsSheetName = getBenchmarkTrialsSheetName_();
+  const summarySheetName = getBenchmarkSummarySheetName_();
+  const reviewSheetName = getBenchmarkReviewSheetName_();
+  const requiredSheetNames = [trialsSheetName, summarySheetName, reviewSheetName];
+  const missingSheetNames = [];
+  for (let i = 0; i < requiredSheetNames.length; i++) {
+    const requiredName = requiredSheetNames[i];
+    if (!spreadsheet.getSheetByName(requiredName)) {
+      missingSheetNames.push(requiredName);
+    }
+  }
+
+  const missingTrialsSheet = missingSheetNames.indexOf(trialsSheetName) !== -1;
+  const missingSummarySheet = missingSheetNames.indexOf(summarySheetName) !== -1;
+  const missingReviewSheet = missingSheetNames.indexOf(reviewSheetName) !== -1;
+
+  if (missingTrialsSheet) {
+    resetBenchmarkSheets();
+    return {
+      ok: true,
+      resetTriggered: true,
+      missingSheetNames: missingSheetNames
+    };
+  }
+
+  if (missingSummarySheet) {
+    refreshBenchmarkSummarySheet();
+  }
+  if (missingReviewSheet) {
+    refreshBenchmarkReviewSheet();
+  }
+
+  return {
+    ok: true,
+    resetTriggered: false,
+    missingSheetNames: missingSheetNames
+  };
+}
+
 function startBenchmarkCampaignFromUi_() {
+  const benchmarkTabGuard = ensureBenchmarkTabsCompleteOrReset_();
   initializeBenchmarkUiControls_();
   const uiState = readBenchmarkUiControlState_();
   const target = uiState.targetMaxTrialCount;
@@ -400,7 +442,8 @@ function startBenchmarkCampaignFromUi_() {
     snapshotFileName: snapshotExport.export ? snapshotExport.export.fileName : '',
     snapshotFileId: snapshotExport.export ? snapshotExport.export.fileId : '',
     orchestratorBaseUrl: config.baseUrl,
-    pollTriggerUniqueId: getActiveBenchmarkCampaignState_().pollTriggerUniqueId
+    pollTriggerUniqueId: getActiveBenchmarkCampaignState_().pollTriggerUniqueId,
+    benchmarkTabGuard: benchmarkTabGuard
   };
   Logger.log(JSON.stringify(compact, null, 2));
   return compact;
