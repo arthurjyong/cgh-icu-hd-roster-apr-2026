@@ -2527,11 +2527,24 @@ function readBenchmarkUiAppliedRosterMetadataForWritebackLog_() {
         metadata: readBenchmarkUiAppliedRosterMetadata_()
       };
     } catch (err) {
-      return {
-        ok: false,
-        source: 'writeBenchmarkUiAppliedRosterMetadata_',
-        message: String(err && err.message ? err.message : err)
-      };
+      const helperReadError = String(err && err.message ? err.message : err);
+      try {
+        return {
+          ok: true,
+          source: 'SCORER_CONFIG!B35:B39',
+          metadata: readBenchmarkUiAppliedRosterMetadataFallback_(),
+          warning: 'readBenchmarkUiAppliedRosterMetadata_ failed; used SCORER_CONFIG fallback read.',
+          helperReadError: helperReadError
+        };
+      } catch (fallbackErr) {
+        return {
+          ok: false,
+          source: 'SCORER_CONFIG!B35:B39',
+          message: String(fallbackErr && fallbackErr.message ? fallbackErr.message : fallbackErr),
+          warning: 'readBenchmarkUiAppliedRosterMetadata_ failed and fallback read also failed.',
+          helperReadError: helperReadError
+        };
+      }
     }
   }
 
