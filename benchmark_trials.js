@@ -141,6 +141,11 @@ function getBenchmarkSummaryHeader_() {
 
 function getBenchmarkReviewHeader_() {
   return [
+    "OperationalState",
+    "StatusSource",
+    "Freshness",
+    "ReconciliationState",
+    "Warning",
     "ChunkCompletedAt",
     "RunId",
     "TrialCount",
@@ -163,6 +168,28 @@ function getBenchmarkReviewHeader_() {
     "FailureMessage",
     "ScorerFingerprintShort"
   ];
+}
+
+function readBenchmarkReviewOperationalProjection_() {
+  const fallback = {
+    OperationalState: "",
+    StatusSource: "",
+    Freshness: "",
+    ReconciliationState: "",
+    Warning: ""
+  };
+
+  try {
+    fallback.OperationalState = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("status").getValue());
+    fallback.StatusSource = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("statusSource").getValue());
+    fallback.Freshness = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("freshness").getValue());
+    fallback.ReconciliationState = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("reconciliationState").getValue());
+    fallback.Warning = normalizeBenchmarkSummaryString_(resolveBenchmarkUiControlRange_("warning").getValue());
+  } catch (_err) {
+    // Keep SEARCH_PROGRESS refresh resilient even when UI controls are not installed yet.
+  }
+
+  return fallback;
 }
 
 function getBenchmarkTrialsColumnMap_() {
@@ -261,12 +288,18 @@ function applyBenchmarkReviewNumberFormatting_(sheet) {
     return;
   }
 
-  sheet.getRange("E:E").setNumberFormat("0");
-  sheet.getRange("I:R").setNumberFormat("0");
-  sheet.getRange("F:F").setNumberFormat("0.00");
-  sheet.getRange("G:G").setNumberFormat("0.00");
-  sheet.getRange("H:H").setNumberFormat("0.00");
-  sheet.getRange("S:S").setNumberFormat("0.00");
+  // SEARCH_PROGRESS schema:
+  // A:E operational projection text columns,
+  // F timestamp, G text runId, H:I integer counters,
+  // J score, K:M decimal stats, N:W score/component integers, X runtime decimal.
+  sheet.getRange("F:F").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  sheet.getRange("H:I").setNumberFormat("0");
+  sheet.getRange("J:J").setNumberFormat("0");
+  sheet.getRange("K:K").setNumberFormat("0.00");
+  sheet.getRange("L:L").setNumberFormat("0.00");
+  sheet.getRange("M:M").setNumberFormat("0.00");
+  sheet.getRange("N:W").setNumberFormat("0");
+  sheet.getRange("X:X").setNumberFormat("0.00");
 }
 
 function applyBenchmarkSheetFormatting_(sheet) {
@@ -851,6 +884,7 @@ function buildBenchmarkReviewRows_() {
   const actualHeader = trialsSheet.getRange(1, 1, 1, lastColumn).getValues()[0];
   const headerMap = buildHeaderIndexMapFromRow_(actualHeader);
   const trialValues = trialsSheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
+  const operationalProjection = readBenchmarkReviewOperationalProjection_();
 
   return trialValues.map(function(sourceRow) {
     const rowObject = {};
@@ -864,6 +898,11 @@ function buildBenchmarkReviewRows_() {
     }
 
     return {
+      OperationalState: safeReviewCellValue_(operationalProjection.OperationalState),
+      StatusSource: safeReviewCellValue_(operationalProjection.StatusSource),
+      Freshness: safeReviewCellValue_(operationalProjection.Freshness),
+      ReconciliationState: safeReviewCellValue_(operationalProjection.ReconciliationState),
+      Warning: safeReviewCellValue_(operationalProjection.Warning),
       ChunkCompletedAt: safeReviewCellValue_(rowObject.ImportTimestamp),
       RunId: safeReviewCellValue_(rowObject.RunId),
       TrialCount: safeReviewCellValue_(rowObject.TrialCount),

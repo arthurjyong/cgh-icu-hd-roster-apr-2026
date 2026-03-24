@@ -1428,6 +1428,7 @@ function runAppendLatestBenchmarkCampaignReportToTrialsSheet() {
   });
 
   Logger.log(JSON.stringify(buildBenchmarkCampaignImportLogPayload_(imported), null, 2));
+  return imported;
 }
 
 function runAppendSelectedBenchmarkCampaignReportToTrialsSheet() {
@@ -1438,6 +1439,7 @@ function runAppendSelectedBenchmarkCampaignReportToTrialsSheet() {
   });
 
   Logger.log(JSON.stringify(buildBenchmarkCampaignImportLogPayload_(imported), null, 2));
+  return imported;
 }
 
 function runReplaceBenchmarkTrialsWithLatestCampaignReport() {
@@ -1448,6 +1450,7 @@ function runReplaceBenchmarkTrialsWithLatestCampaignReport() {
   });
 
   Logger.log(JSON.stringify(buildBenchmarkCampaignImportLogPayload_(imported), null, 2));
+  return imported;
 }
 
 function runReplaceBenchmarkTrialsWithSelectedCampaignReport() {
@@ -1458,6 +1461,7 @@ function runReplaceBenchmarkTrialsWithSelectedCampaignReport() {
   });
 
   Logger.log(JSON.stringify(buildBenchmarkCampaignImportLogPayload_(imported), null, 2));
+  return imported;
 }
 
 

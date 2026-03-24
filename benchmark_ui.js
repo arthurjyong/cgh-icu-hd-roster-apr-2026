@@ -13,6 +13,11 @@ function getBenchmarkUiConfig_() {
       bestRunId: 'BENCHMARK_UI_BEST_RUN_ID',
       bestScore: 'BENCHMARK_UI_BEST_SCORE',
       lastUpdated: 'BENCHMARK_UI_LAST_UPDATED',
+      statusSource: 'BENCHMARK_UI_STATUS_SOURCE',
+      lastBackendConfirmedAt: 'BENCHMARK_UI_LAST_BACKEND_CONFIRMED_AT',
+      freshness: 'BENCHMARK_UI_FRESHNESS',
+      reconciliationState: 'BENCHMARK_UI_RECONCILIATION_STATE',
+      warning: 'BENCHMARK_UI_WARNING',
       specificRunId: 'BENCHMARK_UI_SPECIFIC_RUN_ID',
       defaultWritebackComparisonGroupKey: 'BENCHMARK_UI_DEFAULT_WRITEBACK_COMPARISON_GROUP_KEY',
       campaignSeed: 'BENCHMARK_UI_CAMPAIGN_SEED',
@@ -32,6 +37,11 @@ function getBenchmarkUiConfig_() {
       bestRunId: 'O8',
       bestScore: 'O9',
       lastUpdated: 'O10',
+      statusSource: 'O14',
+      lastBackendConfirmedAt: 'O15',
+      freshness: 'O16',
+      reconciliationState: 'O17',
+      warning: 'O18',
       specificRunId: 'O12',
       defaultWritebackComparisonGroupKey: 'O11',
       campaignSeed: 'O13',
@@ -113,6 +123,11 @@ function getBenchmarkUiNamedRangeTargetA1Map_() {
     completedRuns: 'B31',
     plannedRuns: 'B32',
     campaignSeed: 'B33',
+    statusSource: 'B40',
+    lastBackendConfirmedAt: 'B41',
+    freshness: 'B42',
+    reconciliationState: 'B43',
+    warning: 'B44',
     lastAppliedBestScore: 'B35',
     lastAppliedRunId: 'B36',
     lastAppliedCampaignFolder: 'B37',
@@ -321,6 +336,42 @@ function writeBenchmarkUiLastUpdated_(value) {
   range.setNumberFormat('yyyy-mm-dd hh:mm:ss');
 }
 
+function writeBenchmarkUiLastBackendConfirmedAt_(value) {
+  const range = resolveBenchmarkUiControlRange_('lastBackendConfirmedAt');
+  if (!value) {
+    range.setValue('');
+    return;
+  }
+
+  const dateValue = value instanceof Date ? value : new Date(value);
+  if (!dateValue || isNaN(dateValue.getTime())) {
+    range.setValue(String(value));
+    return;
+  }
+
+  range.setValue(dateValue);
+  range.setNumberFormat('yyyy-mm-dd hh:mm:ss');
+}
+
+function writeBenchmarkUiOperationalHealth_(payload) {
+  const status = payload || {};
+  if (Object.prototype.hasOwnProperty.call(status, 'statusSource')) {
+    writeBenchmarkUiControlValue_('statusSource', normalizeBenchmarkUiString_(status.statusSource));
+  }
+  if (Object.prototype.hasOwnProperty.call(status, 'freshness')) {
+    writeBenchmarkUiControlValue_('freshness', normalizeBenchmarkUiString_(status.freshness));
+  }
+  if (Object.prototype.hasOwnProperty.call(status, 'reconciliationState')) {
+    writeBenchmarkUiControlValue_('reconciliationState', normalizeBenchmarkUiString_(status.reconciliationState));
+  }
+  if (Object.prototype.hasOwnProperty.call(status, 'warning')) {
+    writeBenchmarkUiControlValue_('warning', normalizeBenchmarkUiString_(status.warning));
+  }
+  if (Object.prototype.hasOwnProperty.call(status, 'lastBackendConfirmedAt')) {
+    writeBenchmarkUiLastBackendConfirmedAt_(status.lastBackendConfirmedAt);
+  }
+}
+
 function writeBenchmarkUiCampaignProgress_(statusPayload) {
   const payload = statusPayload || {};
 
@@ -362,6 +413,11 @@ function clearBenchmarkUiCampaignProgress_() {
   writeBenchmarkUiControlValue_('bestRunId', '');
   writeBenchmarkUiControlValue_('bestScore', '');
   writeBenchmarkUiControlValue_('campaignSeed', '');
+  writeBenchmarkUiControlValue_('statusSource', '');
+  writeBenchmarkUiControlValue_('freshness', '');
+  writeBenchmarkUiControlValue_('reconciliationState', '');
+  writeBenchmarkUiControlValue_('warning', '');
+  writeBenchmarkUiControlValue_('lastBackendConfirmedAt', '');
   writeBenchmarkUiControlValue_('seedOverride', '');
   writeBenchmarkUiControlValue_('specificRunId', getBenchmarkUiConfig_().specificRunIdPlaceholder);
   writeBenchmarkUiStatus_(getBenchmarkUiConfig_().defaultStatus);
@@ -411,6 +467,12 @@ function initializeBenchmarkUiControls_() {
 
   const campaignSeedRange = resolveBenchmarkUiControlRange_('campaignSeed');
   campaignSeedRange.setNumberFormat('@');
+  resolveBenchmarkUiControlRange_('statusSource').setNumberFormat('@');
+  resolveBenchmarkUiControlRange_('freshness').setNumberFormat('@');
+  resolveBenchmarkUiControlRange_('reconciliationState').setNumberFormat('@');
+  resolveBenchmarkUiControlRange_('warning').setNumberFormat('@');
+  resolveBenchmarkUiControlRange_('warning').setWrap(true);
+  resolveBenchmarkUiControlRange_('lastBackendConfirmedAt').setNumberFormat('yyyy-mm-dd hh:mm:ss');
   const lastAppliedBestScoreRange = resolveBenchmarkUiControlRange_('lastAppliedBestScore');
   const lastAppliedRunIdRange = resolveBenchmarkUiControlRange_('lastAppliedRunId');
   const lastAppliedCampaignFolderRange = resolveBenchmarkUiControlRange_('lastAppliedCampaignFolder');
@@ -428,6 +490,16 @@ function initializeBenchmarkUiControls_() {
   });
   metadataLabelRange.setValues(metadataLabels);
   metadataLabelRange.setHorizontalAlignment('right');
+
+  const operationalLabelRange = getBenchmarkUiSheet_().getRange('A40:A44');
+  operationalLabelRange.setValues([
+    ['Operational status source'],
+    ['Last backend confirmed at'],
+    ['Freshness'],
+    ['Reconciliation state'],
+    ['Warning']
+  ]);
+  operationalLabelRange.setHorizontalAlignment('right');
 
   getBenchmarkUiSheet_().getRange('B26:B39').setHorizontalAlignment('left');
 

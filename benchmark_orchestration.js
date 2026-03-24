@@ -27,6 +27,7 @@ function getBenchmarkOrchestrationPropertyKeys_() {
     activeCampaignId: prefix + 'ACTIVE_CAMPAIGN_ID',
     activeCampaignFolderName: prefix + 'ACTIVE_CAMPAIGN_FOLDER_NAME',
     activeStatus: prefix + 'ACTIVE_STATUS',
+    activeBackendStatus: prefix + 'ACTIVE_BACKEND_STATUS',
     targetMaxTrialCount: prefix + 'TARGET_MAX_TRIAL_COUNT',
     startedAtIso: prefix + 'STARTED_AT_ISO',
     pollTriggerUniqueId: prefix + 'POLL_TRIGGER_UNIQUE_ID',
@@ -96,6 +97,7 @@ function getActiveBenchmarkCampaignState_() {
     campaignId: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.activeCampaignId)),
     campaignFolderName: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.activeCampaignFolderName)),
     status: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.activeStatus)),
+    backendStatus: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.activeBackendStatus)),
     targetMaxTrialCount: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.targetMaxTrialCount)),
     startedAtIso: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.startedAtIso)),
     pollTriggerUniqueId: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.pollTriggerUniqueId)),
@@ -112,6 +114,7 @@ function setActiveBenchmarkCampaignState_(state) {
   values[keys.activeCampaignId] = normalizeBenchmarkOrchestrationString_(payload.campaignId);
   values[keys.activeCampaignFolderName] = normalizeBenchmarkOrchestrationString_(payload.campaignFolderName);
   values[keys.activeStatus] = normalizeBenchmarkOrchestrationString_(payload.status);
+  values[keys.activeBackendStatus] = normalizeBenchmarkOrchestrationString_(payload.backendStatus);
   values[keys.targetMaxTrialCount] = normalizeBenchmarkOrchestrationString_(payload.targetMaxTrialCount);
   values[keys.startedAtIso] = normalizeBenchmarkOrchestrationString_(payload.startedAtIso);
   values[keys.pollTriggerUniqueId] = normalizeBenchmarkOrchestrationString_(payload.pollTriggerUniqueId);
@@ -126,6 +129,7 @@ function clearActiveBenchmarkCampaignState_() {
   properties.deleteProperty(keys.activeCampaignId);
   properties.deleteProperty(keys.activeCampaignFolderName);
   properties.deleteProperty(keys.activeStatus);
+  properties.deleteProperty(keys.activeBackendStatus);
   properties.deleteProperty(keys.targetMaxTrialCount);
   properties.deleteProperty(keys.startedAtIso);
   properties.deleteProperty(keys.pollTriggerUniqueId);
@@ -164,6 +168,47 @@ function installBenchmarkCampaignPollTrigger_() {
   state.pollTriggerUniqueId = trigger.getUniqueId ? trigger.getUniqueId() : '';
   setActiveBenchmarkCampaignState_(state);
   return state.pollTriggerUniqueId;
+}
+
+function countBenchmarkCampaignPollTriggers_() {
+  const functionName = getBenchmarkCampaignPollTriggerFunctionName_();
+  const triggers = ScriptApp.getProjectTriggers();
+  let count = 0;
+  for (let i = 0; i < triggers.length; i++) {
+    const trigger = triggers[i];
+    if (trigger.getHandlerFunction && trigger.getHandlerFunction() === functionName) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function ensureBenchmarkCampaignPollTriggerHygiene_(hasActiveCampaign) {
+  const active = hasActiveCampaign === true;
+  const triggerCount = countBenchmarkCampaignPollTriggers_();
+  if (!active && triggerCount > 0) {
+    removeBenchmarkCampaignPollTrigger_();
+    return {
+      cleaned: true,
+      removed: triggerCount,
+      installed: false
+    };
+  }
+
+  if (active && triggerCount !== 1) {
+    installBenchmarkCampaignPollTrigger_();
+    return {
+      cleaned: true,
+      removed: Math.max(0, triggerCount - 1),
+      installed: true
+    };
+  }
+
+  return {
+    cleaned: false,
+    removed: 0,
+    installed: false
+  };
 }
 
 function buildBenchmarkCampaignBatchLabelFromUi_(targetMaxTrialCount) {
@@ -299,6 +344,148 @@ function extractBenchmarkProgressPayload_(statusResponse) {
   };
 }
 
+function parseBenchmarkIsoDateOrNull_(value) {
+  const normalized = normalizeBenchmarkOrchestrationString_(value);
+  if (!normalized) {
+    return null;
+  }
+  const parsed = new Date(normalized);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function computeBenchmarkFreshnessBucket_(lastBackendConfirmedAtIso) {
+  const lastConfirmed = parseBenchmarkIsoDateOrNull_(lastBackendConfirmedAtIso);
+  if (!lastConfirmed) {
+    return {
+      bucket: 'UNKNOWN',
+      ageMinutes: null
+    };
+  }
+
+  const ageMs = Math.max(0, Date.now() - lastConfirmed.getTime());
+  const ageMinutes = ageMs / 60000;
+  const intervalMinutes = Math.max(1, Number(getBenchmarkOrchestrationDefaults_().pollEveryMinutes || 1));
+  if (ageMinutes <= intervalMinutes * 2) {
+    return { bucket: 'FRESH', ageMinutes: ageMinutes };
+  }
+  if (ageMinutes <= intervalMinutes * 5) {
+    return { bucket: 'AGING', ageMinutes: ageMinutes };
+  }
+  return { bucket: 'STALE', ageMinutes: ageMinutes };
+}
+
+function buildBenchmarkStatusProjectionState_(payload) {
+  const source = payload || {};
+  const backendStatus = normalizeBenchmarkOrchestrationString_(source.backendStatus).toUpperCase();
+  const activeStatuses = getBenchmarkOrchestrationDefaults_().activeStatusValues;
+  const importAttempted = source.importAttempted === true;
+  const importOk = source.importOk === true;
+  const reconciliationState = normalizeBenchmarkOrchestrationString_(source.reconciliationState).toUpperCase();
+
+  if (backendStatus === activeStatuses.failed) {
+    return 'FAILED';
+  }
+  if (backendStatus === activeStatuses.cancelled) {
+    return 'CANCELLED';
+  }
+  if (reconciliationState === 'DESYNC') {
+    return 'DESYNC_DETECTED';
+  }
+  if (backendStatus === activeStatuses.complete) {
+    if (!importAttempted) {
+      return 'BACKEND_COMPLETE_UNIMPORTED';
+    }
+    if (!importOk) {
+      return 'IMPORT_FAILED';
+    }
+    if (reconciliationState === 'FAILED') {
+      return 'RECONCILIATION_FAILED';
+    }
+    if (reconciliationState === 'DESYNC') {
+      return 'DESYNC_DETECTED';
+    }
+    return 'COMPLETE';
+  }
+
+  if (backendStatus === activeStatuses.pending || backendStatus === activeStatuses.running) {
+    return 'RUNNING';
+  }
+
+  return backendStatus || 'RUNNING';
+}
+
+function buildBenchmarkReconciliationResult_(context) {
+  const source = context || {};
+  const issues = [];
+  const activeStatuses = getBenchmarkOrchestrationDefaults_().activeStatusValues;
+  const statusResponse = source.statusResponse || {};
+  const importResult = source.importResult || null;
+  const activeCampaignFolderName = normalizeBenchmarkOrchestrationString_(source.activeCampaignFolderName);
+  const backendStatus = normalizeBenchmarkOrchestrationString_(statusResponse.status).toUpperCase();
+  const completedRunCount = statusResponse.completedRunCount;
+  const plannedRunCount = statusResponse.plannedRunCount;
+  const backendCountsKnown = completedRunCount !== null && completedRunCount !== undefined &&
+    plannedRunCount !== null && plannedRunCount !== undefined;
+  const backendCountsTerminal = backendCountsKnown ? (
+    Number(completedRunCount) === Number(plannedRunCount) && Number(plannedRunCount) >= 0
+  ) : true;
+
+  const importAttempted = !!importResult;
+  const importOk = !!(importResult && importResult.ok === true);
+  const importSummary = importResult && importResult.summary ? importResult.summary : null;
+  const importedRunCount = importSummary && importSummary.importedRunCount !== undefined && importSummary.importedRunCount !== null
+    ? Number(importSummary.importedRunCount)
+    : null;
+  const reportCompletedCount = importSummary && importSummary.completedCount !== undefined && importSummary.completedCount !== null
+    ? Number(importSummary.completedCount)
+    : null;
+  const importedCampaignFolderName = normalizeBenchmarkOrchestrationString_(
+    importResult && importResult.loaded ? importResult.loaded.campaignFolderName : ''
+  );
+
+  if (importAttempted && !importOk) {
+    issues.push(importResult.message || 'Import failed.');
+  }
+
+  if (importOk && activeCampaignFolderName && importedCampaignFolderName && importedCampaignFolderName !== activeCampaignFolderName) {
+    issues.push(
+      'Imported campaign folder "' + importedCampaignFolderName + '" does not match active campaign folder "' + activeCampaignFolderName + '".'
+    );
+  }
+
+  if (backendStatus === activeStatuses.complete || backendStatus === 'COMPLETE') {
+    if (!importAttempted) {
+      issues.push('Backend is COMPLETE but campaign report import has not been attempted yet.');
+    } else if (!importOk) {
+      issues.push('Backend is COMPLETE but campaign report import failed.');
+    }
+    if (!backendCountsTerminal) {
+      issues.push('Backend is COMPLETE but completed/planned counts are inconsistent.');
+    }
+    if (importOk && backendCountsKnown && importedRunCount !== null && importedRunCount !== Number(plannedRunCount)) {
+      issues.push(
+        'Imported run count (' + importedRunCount + ') does not match planned run count (' + Number(plannedRunCount) + ').'
+      );
+    }
+    if (importOk && backendCountsKnown && reportCompletedCount !== null && reportCompletedCount !== Number(completedRunCount)) {
+      issues.push(
+        'Report completed count (' + reportCompletedCount + ') does not match backend completed count (' + Number(completedRunCount) + ').'
+      );
+    }
+  }
+
+  return {
+    ok: issues.length === 0,
+    reconciliationState: issues.length === 0
+      ? 'PASSED'
+      : (!importOk ? 'FAILED' : (backendStatus === activeStatuses.complete ? 'FAILED' : 'DESYNC')),
+    warning: issues.length > 0 ? issues[0] : '',
+    issues: issues,
+    importAttempted: importAttempted,
+    importOk: importOk
+  };
+}
+
 function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
   const folderName = normalizeBenchmarkOrchestrationString_(campaignFolderName);
   if (!folderName) {
@@ -306,7 +493,17 @@ function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
   }
   setPhase13CampaignImportSelectedCampaignFolder(folderName);
   setPhase13CampaignImportSelectedArtifactFileName(getBenchmarkOrchestrationDefaults_().artifactFileName);
-  runAppendSelectedBenchmarkCampaignReportToTrialsSheet();
+  let imported = null;
+  try {
+    imported = runAppendSelectedBenchmarkCampaignReportToTrialsSheet();
+  } catch (err) {
+    return {
+      ok: false,
+      campaignFolderName: folderName,
+      message: String(err && err.message ? err.message : err),
+      bestWinner: null
+    };
+  }
 
   let bestWinner = null;
   try {
@@ -327,7 +524,10 @@ function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
   return {
     ok: true,
     campaignFolderName: folderName,
-    bestWinner: bestWinner
+    bestWinner: bestWinner,
+    loaded: imported && imported.loaded ? imported.loaded : null,
+    summary: imported && imported.summary ? imported.summary : null,
+    writeResult: imported && imported.writeResult ? imported.writeResult : null
   };
 }
 
@@ -338,6 +538,7 @@ function buildCompactBenchmarkCampaignStateSummary_(state) {
     campaignId: active.campaignId || '',
     campaignFolderName: active.campaignFolderName || '',
     status: active.status || '',
+    backendStatus: active.backendStatus || '',
     targetMaxTrialCount: active.targetMaxTrialCount || '',
     startedAtIso: active.startedAtIso || '',
     pollTriggerUniqueId: active.pollTriggerUniqueId || '',
@@ -470,6 +671,13 @@ function startBenchmarkCampaignFromUi_() {
   }
 
   writeBenchmarkUiStatus_('STARTING');
+  writeBenchmarkUiOperationalHealth_({
+    statusSource: 'APPS_SCRIPT_START',
+    freshness: 'UNKNOWN',
+    reconciliationState: 'PENDING',
+    warning: '',
+    lastBackendConfirmedAt: ''
+  });
   const config = assertBenchmarkOrchestratorConfigured_();
   const payload = buildBenchmarkCampaignStartPayload_(snapshotExport, uiState);
   const started = callBenchmarkOrchestratorStart_(payload);
@@ -478,7 +686,8 @@ function startBenchmarkCampaignFromUi_() {
   setActiveBenchmarkCampaignState_({
     campaignId: started.campaignId || '',
     campaignFolderName: started.campaignFolderName || '',
-    status: started.status || 'RUNNING',
+    status: 'STARTING',
+    backendStatus: started.status || 'RUNNING',
     targetMaxTrialCount: String(target),
     startedAtIso: started.startedAt || nowIso,
     pollTriggerUniqueId: '',
@@ -521,6 +730,15 @@ function startBenchmarkCampaignFromUi_() {
 function pollActiveBenchmarkCampaign_() {
   const state = getActiveBenchmarkCampaignState_();
   if (!state.campaignId) {
+    ensureBenchmarkCampaignPollTriggerHygiene_(false);
+    writeBenchmarkUiStatus_('IDLE');
+    writeBenchmarkUiOperationalHealth_({
+      statusSource: 'NO_ACTIVE_CAMPAIGN',
+      freshness: 'UNKNOWN',
+      reconciliationState: 'UNKNOWN',
+      warning: 'No active campaign metadata; cleaned up poll trigger.',
+      lastBackendConfirmedAt: ''
+    });
     return {
       ok: false,
       skipped: true,
@@ -528,61 +746,128 @@ function pollActiveBenchmarkCampaign_() {
     };
   }
 
+  const storedStatusUpper = normalizeBenchmarkOrchestrationString_(state.status).toUpperCase();
+  const activeStatuses = getBenchmarkOrchestrationDefaults_().activeStatusValues;
+  if (storedStatusUpper === 'STOPPED') {
+    ensureBenchmarkCampaignPollTriggerHygiene_(false);
+    writeBenchmarkUiOperationalHealth_({
+      statusSource: 'MANUAL_STOP',
+      freshness: 'UNKNOWN',
+      reconciliationState: 'UNKNOWN',
+      warning: 'Polling is manually stopped.',
+      lastBackendConfirmedAt: ''
+    });
+    return {
+      ok: true,
+      skipped: true,
+      message: 'Polling is manually stopped.'
+    };
+  }
+
+  if (
+    storedStatusUpper === activeStatuses.complete ||
+    storedStatusUpper === activeStatuses.failed ||
+    storedStatusUpper === activeStatuses.cancelled
+  ) {
+    removeBenchmarkCampaignPollTrigger_();
+    writeBenchmarkUiOperationalHealth_({
+      statusSource: 'SCRIPT_PROPERTIES_TERMINAL',
+      freshness: 'UNKNOWN',
+      reconciliationState: 'UNKNOWN',
+      warning: 'Terminal projected state stored; cleaned up poll trigger.',
+      lastBackendConfirmedAt: ''
+    });
+    return {
+      ok: true,
+      skipped: true,
+      message: 'Terminal campaign state already stored; poll trigger removed.'
+    };
+  }
+
+  ensureBenchmarkCampaignPollTriggerHygiene_(true);
+
   const statusResponse = callBenchmarkOrchestratorStatus_(state.campaignId);
   const nowIso = new Date().toISOString();
   state.campaignFolderName = normalizeBenchmarkOrchestrationString_(statusResponse.campaignFolderName) || state.campaignFolderName;
-  state.status = normalizeBenchmarkOrchestrationString_(statusResponse.status) || state.status;
+  state.backendStatus = normalizeBenchmarkOrchestrationString_(statusResponse.status) || state.backendStatus;
   state.campaignSeed = normalizeBenchmarkOrchestrationString_(statusResponse.baseSeed) || state.campaignSeed;
   state.lastPollAtIso = nowIso;
-  setActiveBenchmarkCampaignState_(state);
 
   writeBenchmarkUiCampaignProgress_(extractBenchmarkProgressPayload_(statusResponse));
 
   let importResult = null;
   let autoApplyResult = null;
+  let importAttempted = false;
   if (state.campaignFolderName) {
     try {
+      importAttempted = true;
+      writeBenchmarkUiStatus_('IMPORTING');
       importResult = refreshBenchmarkTablesFromCampaignFolder_(state.campaignFolderName);
-      autoApplyResult = maybeAutoApplyOperationalBestWinner_({
-        campaignFolderName: state.campaignFolderName,
-        sourceMode: 'OPERATIONAL_MID_RUN'
-      });
+      if (importResult && importResult.ok === true) {
+        autoApplyResult = maybeAutoApplyOperationalBestWinner_({
+          campaignFolderName: state.campaignFolderName,
+          sourceMode: 'OPERATIONAL_MID_RUN'
+        });
+      } else {
+        autoApplyResult = {
+          ok: false,
+          skipped: true,
+          reason: 'IMPORT_NOT_OK',
+          message: importResult && importResult.message
+            ? importResult.message
+            : 'Skipped auto-apply because campaign import was not successful.'
+        };
+      }
     } catch (err) {
       importResult = {
         ok: false,
         message: String(err && err.message ? err.message : err)
       };
+      autoApplyResult = {
+        ok: false,
+        skipped: true,
+        reason: 'IMPORT_EXCEPTION',
+        message: importResult.message
+      };
     }
   }
 
   const statusUpper = normalizeBenchmarkOrchestrationString_(statusResponse.status).toUpperCase();
-  const activeStatuses = getBenchmarkOrchestrationDefaults_().activeStatusValues;
-
   const completedRunCount = statusResponse.completedRunCount;
   const plannedRunCount = statusResponse.plannedRunCount;
-  const countsShowComplete =
-    completedRunCount !== null &&
-    completedRunCount !== undefined &&
-    plannedRunCount !== null &&
-    plannedRunCount !== undefined &&
-    Number(completedRunCount) >= Number(plannedRunCount) &&
-    Number(plannedRunCount) > 0;
-  const bestResultExists =
-    normalizeBenchmarkOrchestrationString_(statusResponse.currentBestRunId) ||
-    (importResult &&
-      importResult.bestWinner &&
-      importResult.bestWinner.ok === true &&
-      normalizeBenchmarkOrchestrationString_(importResult.bestWinner.runId));
-  const importShowsComplete = importResult && importResult.ok === true && countsShowComplete && !!bestResultExists;
+  const reconciliation = buildBenchmarkReconciliationResult_({
+    statusResponse: statusResponse,
+    importResult: importResult,
+    activeCampaignFolderName: state.campaignFolderName
+  });
+  const projectedState = buildBenchmarkStatusProjectionState_({
+    backendStatus: statusUpper,
+    importAttempted: importAttempted,
+    importOk: importResult ? importResult.ok === true : false,
+    reconciliationState: reconciliation.reconciliationState
+  });
 
-  const effectiveStatusUpper =
-    statusUpper === activeStatuses.complete ||
-    statusUpper === activeStatuses.failed ||
-    statusUpper === activeStatuses.cancelled
-      ? statusUpper
-      : (importShowsComplete ? activeStatuses.complete : statusUpper);
+  const freshness = computeBenchmarkFreshnessBucket_(statusResponse.lastUpdated || statusResponse.completedAt || '');
+  const staleWarning = freshness.bucket === 'STALE'
+    ? 'Status may be stale; last backend confirmation at ' + (statusResponse.lastUpdated || statusResponse.completedAt || 'unknown') + '.'
+    : '';
+  const warningMessages = [];
+  if (reconciliation.warning) {
+    warningMessages.push(reconciliation.warning);
+  }
+  if (staleWarning) {
+    warningMessages.push(staleWarning);
+  }
 
-  if (effectiveStatusUpper === activeStatuses.complete) {
+  writeBenchmarkUiOperationalHealth_({
+    statusSource: statusResponse.contractVersion ? 'BACKEND_STATUS_FILE' : 'ORCHESTRATOR_RUNTIME',
+    freshness: freshness.bucket,
+    reconciliationState: reconciliation.reconciliationState,
+    warning: warningMessages.join(' | '),
+    lastBackendConfirmedAt: statusResponse.lastUpdated || statusResponse.completedAt || ''
+  });
+
+  if (projectedState === 'COMPLETE') {
     const finalAutoApplyResult = maybeAutoApplyOperationalBestWinner_({
       campaignFolderName: state.campaignFolderName,
       sourceMode: 'OPERATIONAL_FINAL'
@@ -606,28 +891,34 @@ function pollActiveBenchmarkCampaign_() {
   }
 
   if (
-    effectiveStatusUpper === activeStatuses.complete ||
-    effectiveStatusUpper === activeStatuses.failed ||
-    effectiveStatusUpper === activeStatuses.cancelled
+    projectedState === 'COMPLETE' ||
+    projectedState === 'FAILED' ||
+    projectedState === 'CANCELLED'
   ) {
     removeBenchmarkCampaignPollTrigger_();
-    if (effectiveStatusUpper === activeStatuses.complete) {
+    if (projectedState === 'COMPLETE') {
       writeBenchmarkUiStatus_('COMPLETE');
-    } else if (effectiveStatusUpper === activeStatuses.failed) {
+    } else if (projectedState === 'FAILED') {
       writeBenchmarkUiStatus_(statusResponse.errorMessage ? 'FAILED: ' + statusResponse.errorMessage : 'FAILED');
     } else {
       writeBenchmarkUiStatus_('CANCELLED');
     }
-    const finishedState = getActiveBenchmarkCampaignState_();
-    finishedState.status = effectiveStatusUpper;
+    const finishedState = state;
+    finishedState.status = projectedState;
+    finishedState.backendStatus = statusUpper;
     setActiveBenchmarkCampaignState_(finishedState);
+  } else {
+    state.status = projectedState;
+    setActiveBenchmarkCampaignState_(state);
+    writeBenchmarkUiStatus_(projectedState);
   }
 
   const compact = {
     ok: true,
     campaignId: state.campaignId,
     campaignFolderName: state.campaignFolderName,
-    status: effectiveStatusUpper || state.status,
+    status: projectedState,
+    backendStatus: statusUpper || state.backendStatus,
     completedRunCount: completedRunCount,
     plannedRunCount: plannedRunCount,
     currentBestRunId: statusResponse.currentBestRunId ||
@@ -637,6 +928,11 @@ function pollActiveBenchmarkCampaign_() {
         ? statusResponse.currentBestScore
         : (importResult && importResult.bestWinner ? importResult.bestWinner.bestScore : null),
     errorMessage: statusResponse.errorMessage || statusResponse.error || '',
+    statusSource: statusResponse.contractVersion ? 'BACKEND_STATUS_FILE' : 'ORCHESTRATOR_RUNTIME',
+    freshness: freshness.bucket,
+    reconciliationState: reconciliation.reconciliationState,
+    warning: warningMessages.join(' | '),
+    lastBackendConfirmedAt: statusResponse.lastUpdated || statusResponse.completedAt || '',
     importOk: importResult ? importResult.ok === true : false,
     importMessage: importResult && importResult.ok !== true ? importResult.message || '' : '',
     autoApplyOk: autoApplyResult ? autoApplyResult.ok === true : false,
@@ -651,6 +947,13 @@ function clearActiveBenchmarkCampaignUiAndState_() {
   removeBenchmarkCampaignPollTrigger_();
   clearActiveBenchmarkCampaignState_();
   clearBenchmarkUiCampaignProgress_();
+  writeBenchmarkUiOperationalHealth_({
+    statusSource: '',
+    freshness: '',
+    reconciliationState: '',
+    warning: '',
+    lastBackendConfirmedAt: ''
+  });
   return { ok: true };
 }
 
@@ -673,6 +976,13 @@ function pollActiveBenchmarkCampaign() {
 function stopActiveBenchmarkCampaignPolling() {
   const removedCount = removeBenchmarkCampaignPollTrigger_();
   writeBenchmarkUiStatus_('STOPPED');
+  writeBenchmarkUiOperationalHealth_({
+    statusSource: 'MANUAL_STOP',
+    freshness: 'UNKNOWN',
+    reconciliationState: 'UNKNOWN',
+    warning: 'Polling manually stopped.',
+    lastBackendConfirmedAt: ''
+  });
   const state = getActiveBenchmarkCampaignState_();
   state.status = 'STOPPED';
   setActiveBenchmarkCampaignState_(state);
