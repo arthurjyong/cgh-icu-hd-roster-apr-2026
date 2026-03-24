@@ -78,12 +78,40 @@ function hotfixSalvageCampaignByFolderName(campaignFolderName) {
   var campaignFolder = hotfixFindSingleFolderByNameOrThrow_(benchmarkRunsFolder, folderName, 'benchmark_runs');
 
   var reportInfo = hotfixTryLoadCampaignReport_(campaignFolder);
-  var recoveredRunsInfo = hotfixRecoverRunsFromRunsFolder_(campaignFolder);
+  var recoveredRunsInfo = null;
+  var shouldUseRecoveredRuns = false;
+  var runRecords = [];
 
-  var shouldUseRecoveredRuns = hotfixShouldUseRecoveredRuns_(reportInfo, recoveredRunsInfo);
-  var runRecords = shouldUseRecoveredRuns
-    ? recoveredRunsInfo.runs
-    : hotfixBuildRunRecordsFromReport_(reportInfo.report, folderName);
+  if (reportInfo.valid === true && reportInfo.report) {
+    // Prefer the report path first. Only attempt runs/ scan for stale-checking.
+    runRecords = hotfixBuildRunRecordsFromReport_(reportInfo.report, folderName);
+
+    try {
+      recoveredRunsInfo = hotfixRecoverRunsFromRunsFolder_(campaignFolder);
+      shouldUseRecoveredRuns = hotfixShouldUseRecoveredRuns_(reportInfo, recoveredRunsInfo);
+      if (shouldUseRecoveredRuns) {
+        runRecords = recoveredRunsInfo.runs;
+      }
+    } catch (runsErr) {
+      Logger.log(
+        '[hotfix] runs/ stale-check skipped; proceeding with valid campaign report. reason=' +
+        hotfixStringifyError_(runsErr)
+      );
+      recoveredRunsInfo = {
+        runsFolderId: '',
+        totalRunFolders: 0,
+        runs: [],
+        skipped: [],
+        skippedReason: hotfixStringifyError_(runsErr)
+      };
+      shouldUseRecoveredRuns = false;
+    }
+  } else {
+    // Report missing/invalid: runs/ recovery is required.
+    recoveredRunsInfo = hotfixRecoverRunsFromRunsFolder_(campaignFolder);
+    shouldUseRecoveredRuns = true;
+    runRecords = recoveredRunsInfo.runs;
+  }
 
   if (!runRecords.length) {
     throw new Error(
@@ -100,9 +128,8 @@ function hotfixSalvageCampaignByFolderName(campaignFolderName) {
     sourceLabel: shouldUseRecoveredRuns ? 'recovered_from_runs' : 'campaign_report'
   });
 
-  // Use existing append path to avoid destroying prior campaign salvage rows.
-  appendBenchmarkRows_(rows);
-  refreshBenchmarkReviewSheet();
+  // Use deduping append path when available so retries do not duplicate rows.
+  var writeResult = hotfixAppendRowsWithDedupe_(rows);
 
   var progress = hotfixComputeCampaignProgress_(runRecords);
   hotfixBestEffortWriteUiProgress_(folderName, progress, shouldUseRecoveredRuns);
@@ -112,7 +139,8 @@ function hotfixSalvageCampaignByFolderName(campaignFolderName) {
     campaignFolderName: folderName,
     writeMode: 'APPEND',
     sourceMode: shouldUseRecoveredRuns ? HOTFIX_DESYNC_STATUS_LABEL : HOTFIX_RECOVERY_STATUS_LABEL,
-    importedRunCount: rows.length,
+    importedRunCount: writeResult.rowCount,
+    skippedDuplicateRowCount: writeResult.skippedDuplicateRowCount,
     recoveredRunsFolderCount: recoveredRunsInfo.totalRunFolders,
     recoveredRunnableCount: recoveredRunsInfo.runs.length,
     recoveredSkippedCount: recoveredRunsInfo.skipped.length,
@@ -132,6 +160,40 @@ function hotfixSalvageCampaignByFolderName(campaignFolderName) {
   }, null, 2));
 
   return result;
+}
+
+function hotfixAppendRowsWithDedupe_(rows) {
+  var appendRows = Array.isArray(rows) ? rows : [];
+
+  if (typeof writeBenchmarkCampaignRowsToTrialsSheet_ === 'function') {
+    var write = writeBenchmarkCampaignRowsToTrialsSheet_(appendRows, {
+      writeMode: 'APPEND',
+      refreshSummarySheet: true
+    });
+    var trialsWrite = write && write.trialsWriteResult ? write.trialsWriteResult : {};
+    return {
+      rowCount: hotfixFiniteOrNull_(trialsWrite.rowCount) || 0,
+      skippedDuplicateRowCount: hotfixFiniteOrNull_(trialsWrite.skippedDuplicateRowCount) || 0
+    };
+  }
+
+  // Fallback when campaign import writer helper is not available.
+  if (typeof filterBenchmarkTrialsRowsForAppendDeduping_ === 'function') {
+    var dedupe = filterBenchmarkTrialsRowsForAppendDeduping_(appendRows);
+    appendBenchmarkRows_(dedupe.rowsToAppend || []);
+    refreshBenchmarkReviewSheet();
+    return {
+      rowCount: dedupe.rowsToAppend ? dedupe.rowsToAppend.length : 0,
+      skippedDuplicateRowCount: hotfixFiniteOrNull_(dedupe.skippedDuplicateRowCount) || 0
+    };
+  }
+
+  appendBenchmarkRows_(appendRows);
+  refreshBenchmarkReviewSheet();
+  return {
+    rowCount: appendRows.length,
+    skippedDuplicateRowCount: 0
+  };
 }
 
 function hotfixTryLoadCampaignReport_(campaignFolder) {
