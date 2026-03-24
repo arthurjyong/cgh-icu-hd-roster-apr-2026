@@ -666,7 +666,9 @@ async function maybeUploadCampaignToDrive(config, modules, campaignArtifactWrite
   const driveUploadResult = await modules.driveUpload.uploadFinalArtifactsToDrive({
     driveAuthGateway,
     config,
-    artifactSet
+    artifactSet,
+    allowExistingRunFolder: true,
+    replaceExistingFiles: true
   });
 
   const driveUploadSummary = {

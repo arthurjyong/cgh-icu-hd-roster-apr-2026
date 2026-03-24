@@ -408,8 +408,12 @@ function initializeBenchmarkUiControls_() {
 
 function readBenchmarkUiAppliedRosterMetadata_() {
   const rawBestScore = resolveBenchmarkUiControlRange_('lastAppliedBestScore').getValue();
-  const numericBestScore = Number(rawBestScore);
-  const lastAppliedBestScore = Number.isFinite(numericBestScore) ? numericBestScore : null;
+  const normalizedBestScore = normalizeBenchmarkUiString_(rawBestScore);
+  let lastAppliedBestScore = null;
+  if (normalizedBestScore) {
+    const numericBestScore = Number(normalizedBestScore);
+    lastAppliedBestScore = Number.isFinite(numericBestScore) ? numericBestScore : null;
+  }
   return {
     lastAppliedBestScore: lastAppliedBestScore,
     lastAppliedRunId: normalizeBenchmarkUiString_(resolveBenchmarkUiControlRange_('lastAppliedRunId').getValue()),
