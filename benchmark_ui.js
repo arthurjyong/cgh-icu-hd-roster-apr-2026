@@ -416,7 +416,7 @@ function initializeBenchmarkUiControls_() {
   const lastAppliedCampaignFolderRange = resolveBenchmarkUiControlRange_('lastAppliedCampaignFolder');
   const lastAppliedTimestampRange = resolveBenchmarkUiControlRange_('lastAppliedTimestamp');
   const lastAppliedSourceModeRange = resolveBenchmarkUiControlRange_('lastAppliedSourceMode');
-  lastAppliedBestScoreRange.setNumberFormat('0.############');
+  lastAppliedBestScoreRange.setNumberFormat('0');
   lastAppliedRunIdRange.setNumberFormat('@');
   lastAppliedCampaignFolderRange.setNumberFormat('@');
   lastAppliedTimestampRange.setNumberFormat('yyyy-mm-dd hh:mm:ss');
@@ -469,6 +469,8 @@ function readBenchmarkUiAppliedRosterMetadata_() {
 
 function writeBenchmarkUiAppliedRosterMetadata_(payload) {
   const metadata = payload || {};
+  const lastAppliedBestScoreRange = resolveBenchmarkUiControlRange_('lastAppliedBestScore');
+  lastAppliedBestScoreRange.setNumberFormat('0');
   writeBenchmarkUiControlValue_(
     'lastAppliedBestScore',
     metadata.lastAppliedBestScore === null || metadata.lastAppliedBestScore === undefined ? '' : metadata.lastAppliedBestScore
