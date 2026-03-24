@@ -90,10 +90,12 @@ function run() {
   const exactChunkPlan = context.deriveBenchmarkCampaignChunkPlanFromTarget_(500000);
   assert.deepStrictEqual(Array.from(exactChunkPlan.campaignTrialCounts), [5000]);
   assert.strictEqual(exactChunkPlan.campaignRepeats, 100);
+  assert.strictEqual(exactChunkPlan.normalizedTargetMaxTrialCount, 500000);
 
   const remainderChunkPlan = context.deriveBenchmarkCampaignChunkPlanFromTarget_(13000);
-  assert.deepStrictEqual(Array.from(remainderChunkPlan.campaignTrialCounts), [5000, 5000, 3000]);
-  assert.strictEqual(remainderChunkPlan.campaignRepeats, 1);
+  assert.deepStrictEqual(Array.from(remainderChunkPlan.campaignTrialCounts), [5000]);
+  assert.strictEqual(remainderChunkPlan.campaignRepeats, 3);
+  assert.strictEqual(remainderChunkPlan.normalizedTargetMaxTrialCount, 15000);
 
   // payload construction (trialCounts + repeats)
   const payload = context.buildBenchmarkCampaignStartPayload_(
@@ -112,8 +114,8 @@ function run() {
       seedOverride: '777'
     }
   );
-  assert.deepStrictEqual(Array.from(payload.campaignTrialCounts), [5000, 5000, 3000]);
-  assert.strictEqual(payload.campaignRepeats, 1);
+  assert.deepStrictEqual(Array.from(payload.campaignTrialCounts), [5000]);
+  assert.strictEqual(payload.campaignRepeats, 3);
 
   // append + dedupe + non-wipe simulation
   const header = Array.from(context.getBenchmarkTrialsHeader_());

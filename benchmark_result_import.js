@@ -1294,12 +1294,10 @@ function writeBenchmarkCampaignRowsToTrialsSheet_(rows, options) {
 
   let summaryWriteResult = null;
   if (settings.refreshSummarySheet !== false) {
-    refreshBenchmarkSummarySheet();
     refreshBenchmarkReviewSheet();
     summaryWriteResult = {
       ok: true,
       sheetNames: [
-        getBenchmarkSummarySheetName_(),
         getBenchmarkReviewSheetName_()
       ]
     };
@@ -1735,12 +1733,12 @@ function buildBenchmarkTrialsWritebackScopeRecoveryMessage_(requestedComparisonG
 
   if (requested) {
     return (
-      'Update or clear the Default Writeback ComparisonGroupKey control in SCORER_CONFIG, refresh BENCHMARK_SUMMARY to copy a current ComparisonGroupKey, or choose an explicit RunId instead.'
+      'Update or clear the Default Writeback ComparisonGroupKey control in SCORER_CONFIG, then choose an explicit RunId or a current ComparisonGroupKey.'
     );
   }
 
   return (
-    'Set the Default Writeback ComparisonGroupKey control in SCORER_CONFIG to a BENCHMARK_SUMMARY ComparisonGroupKey, or choose an explicit RunId instead.'
+    'Set the Default Writeback ComparisonGroupKey control in SCORER_CONFIG to a valid ComparisonGroupKey, or choose an explicit RunId instead.'
   );
 }
 

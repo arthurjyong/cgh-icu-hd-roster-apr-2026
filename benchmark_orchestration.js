@@ -349,9 +349,8 @@ function buildCompactBenchmarkCampaignStateSummary_(state) {
 function ensureBenchmarkTabsCompleteOrReset_() {
   const spreadsheet = SpreadsheetApp.getActive();
   const trialsSheetName = getBenchmarkTrialsSheetName_();
-  const summarySheetName = getBenchmarkSummarySheetName_();
   const reviewSheetName = getBenchmarkReviewSheetName_();
-  const requiredSheetNames = [trialsSheetName, summarySheetName, reviewSheetName];
+  const requiredSheetNames = [trialsSheetName, reviewSheetName];
   const missingSheetNames = [];
   for (let i = 0; i < requiredSheetNames.length; i++) {
     const requiredName = requiredSheetNames[i];
@@ -361,7 +360,6 @@ function ensureBenchmarkTabsCompleteOrReset_() {
   }
 
   const missingTrialsSheet = missingSheetNames.indexOf(trialsSheetName) !== -1;
-  const missingSummarySheet = missingSheetNames.indexOf(summarySheetName) !== -1;
   const missingReviewSheet = missingSheetNames.indexOf(reviewSheetName) !== -1;
 
   if (missingTrialsSheet) {
@@ -373,9 +371,6 @@ function ensureBenchmarkTabsCompleteOrReset_() {
     };
   }
 
-  if (missingSummarySheet) {
-    refreshBenchmarkSummarySheet();
-  }
   if (missingReviewSheet) {
     refreshBenchmarkReviewSheet();
   }
@@ -385,6 +380,76 @@ function ensureBenchmarkTabsCompleteOrReset_() {
     resetTriggered: false,
     missingSheetNames: missingSheetNames
   };
+}
+
+function maybeAutoApplyOperationalBestWinner_(options) {
+  const context = options || {};
+  let selection;
+  try {
+    selection = selectBestBenchmarkTrialsWinnerForWriteback_();
+  } catch (err) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'NO_VALID_BEST_WINNER',
+      message: String(err && err.message ? err.message : err)
+    };
+  }
+
+  const candidate = selection && selection.candidateRow ? selection.candidateRow : {};
+  const newBestScore = candidate && typeof candidate.BestScore === 'number' ? candidate.BestScore : null;
+  if (newBestScore === null) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'BEST_SCORE_MISSING',
+      message: 'Best candidate is missing numeric BestScore.'
+    };
+  }
+
+  const metadata = readBenchmarkUiAppliedRosterMetadata_();
+  const previousAppliedScore = metadata.lastAppliedBestScore;
+  const shouldApply = previousAppliedScore === null || newBestScore < previousAppliedScore;
+  if (!shouldApply) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'STRICT_LOWER_REQUIRED',
+      lastAppliedBestScore: previousAppliedScore,
+      candidateBestScore: newBestScore
+    };
+  }
+
+  try {
+    writeTransportTrialResultToSheet_(selection.transportResult);
+    writeBenchmarkUiAppliedRosterMetadata_({
+      lastAppliedBestScore: newBestScore,
+      lastAppliedRunId: candidate.RunId || '',
+      lastAppliedCampaignFolder: candidate.CampaignFolderName || context.campaignFolderName || '',
+      lastAppliedTimestamp: new Date(),
+      lastAppliedSourceMode: context.sourceMode || 'OPERATIONAL_RED_BUTTON'
+    });
+    return {
+      ok: true,
+      applied: true,
+      lastAppliedBestScore: newBestScore,
+      runId: candidate.RunId || '',
+      campaignFolderName: candidate.CampaignFolderName || context.campaignFolderName || ''
+    };
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    writeBenchmarkUiStatus_('RUNNING: AUTO-APPLY ERROR');
+    Logger.log(JSON.stringify({
+      ok: false,
+      stage: 'auto_apply_operational_best',
+      message: message
+    }, null, 2));
+    return {
+      ok: false,
+      applied: false,
+      message: message
+    };
+  }
 }
 
 function startBenchmarkCampaignFromUi_() {
@@ -474,9 +539,14 @@ function pollActiveBenchmarkCampaign_() {
   writeBenchmarkUiCampaignProgress_(extractBenchmarkProgressPayload_(statusResponse));
 
   let importResult = null;
+  let autoApplyResult = null;
   if (state.campaignFolderName) {
     try {
       importResult = refreshBenchmarkTablesFromCampaignFolder_(state.campaignFolderName);
+      autoApplyResult = maybeAutoApplyOperationalBestWinner_({
+        campaignFolderName: state.campaignFolderName,
+        sourceMode: 'OPERATIONAL_MID_RUN'
+      });
     } catch (err) {
       importResult = {
         ok: false,
@@ -513,6 +583,13 @@ function pollActiveBenchmarkCampaign_() {
       : (importShowsComplete ? activeStatuses.complete : statusUpper);
 
   if (effectiveStatusUpper === activeStatuses.complete) {
+    const finalAutoApplyResult = maybeAutoApplyOperationalBestWinner_({
+      campaignFolderName: state.campaignFolderName,
+      sourceMode: 'OPERATIONAL_FINAL'
+    });
+    if (!autoApplyResult) {
+      autoApplyResult = finalAutoApplyResult;
+    }
     writeBenchmarkUiCampaignProgress_(extractBenchmarkProgressPayload_({
       status: activeStatuses.complete,
       campaignFolderName: state.campaignFolderName,
@@ -561,7 +638,10 @@ function pollActiveBenchmarkCampaign_() {
         : (importResult && importResult.bestWinner ? importResult.bestWinner.bestScore : null),
     errorMessage: statusResponse.errorMessage || statusResponse.error || '',
     importOk: importResult ? importResult.ok === true : false,
-    importMessage: importResult && importResult.ok !== true ? importResult.message || '' : ''
+    importMessage: importResult && importResult.ok !== true ? importResult.message || '' : '',
+    autoApplyOk: autoApplyResult ? autoApplyResult.ok === true : false,
+    autoApplyApplied: autoApplyResult ? autoApplyResult.applied === true : false,
+    autoApplyMessage: autoApplyResult && autoApplyResult.ok !== true ? autoApplyResult.message || '' : ''
   };
   Logger.log(JSON.stringify(compact, null, 2));
   return compact;

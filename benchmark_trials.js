@@ -1,13 +1,9 @@
 function getBenchmarkTrialsSheetName_() {
-  return "BENCHMARK_TRIALS";
-}
-
-function getBenchmarkSummarySheetName_() {
-  return "BENCHMARK_SUMMARY";
+  return "SEARCH_LOG";
 }
 
 function getBenchmarkReviewSheetName_() {
-  return "BENCHMARK_REVIEW";
+  return "SEARCH_PROGRESS";
 }
 
 function getBenchmarkTrialsHeader_() {
@@ -145,41 +141,18 @@ function getBenchmarkSummaryHeader_() {
 
 function getBenchmarkReviewHeader_() {
   return [
-    "ImportTimestamp",
-    "CampaignBatchLabel",
-    "TrialCount",
-    "RepeatIndex",
+    "ChunkCompletedAt",
+    "CampaignFolderName",
     "RunId",
-    "RunIdStatus",
+    "TrialCount",
+    "ChunkIndex",
     "BestScore",
-    "TotalScore",
-    "MeanPoints",
-    "StandardDeviation",
-    "Range",
-    "PointBalanceGlobal",
-    "PointBalanceWithinSection",
-    "SpacingPenalty",
-    "CrReward",
-    "DualEligibleIcuBonus",
-    "StandbyAdjacencyPenalty",
-    "StandbyCountFairnessPenalty",
-    "PreLeavePenalty",
-    "UnfilledPenalty",
+    "ScoreDirection",
+    "InvocationMode",
     "RuntimeSec",
     "SummaryMessage",
     "FailureMessage",
-    "SnapshotLabel",
-    "SnapshotFileSha256",
-    "Ok",
-    "InvocationMode",
-    "Seed",
-    "CampaignFolderName",
-    "RunFolderName",
-    "ArtifactFileName",
-    "ScorerFingerprint",
-    "ScorerFingerprintShort",
-    "ScorerFingerprintVersion",
-    "ScorerSource"
+    "ScorerFingerprintShort"
   ];
 }
 
@@ -263,17 +236,25 @@ function ensureBenchmarkSheet_(sheetName, headerRow) {
 }
 
 function ensureBenchmarkTrialsSheet_() {
-  return ensureBenchmarkSheet_(getBenchmarkTrialsSheetName_(), getBenchmarkTrialsHeader_());
-}
-
-function ensureBenchmarkSummarySheet_() {
-  return ensureBenchmarkSheet_(getBenchmarkSummarySheetName_(), getBenchmarkSummaryHeader_());
+  const sheet = ensureBenchmarkSheet_(getBenchmarkTrialsSheetName_(), getBenchmarkTrialsHeader_());
+  moveBenchmarkSheetToPosition_(sheet, SpreadsheetApp.getActive().getSheets().length);
+  return sheet;
 }
 
 function ensureBenchmarkReviewSheet_() {
-  return ensureBenchmarkSheet_(getBenchmarkReviewSheetName_(), getBenchmarkReviewHeader_());
+  const sheet = ensureBenchmarkSheet_(getBenchmarkReviewSheetName_(), getBenchmarkReviewHeader_());
+  moveBenchmarkSheetToPosition_(sheet, 2);
+  return sheet;
 }
 
+function moveBenchmarkSheetToPosition_(sheet, position) {
+  if (!sheet || typeof position !== "number") {
+    return;
+  }
+  const ss = SpreadsheetApp.getActive();
+  ss.setActiveSheet(sheet);
+  ss.moveActiveSheet(Math.max(1, position));
+}
 
 function writeBenchmarkSheetHeaderRow_(sheet, headerRow) {
   if (!sheet) {
@@ -362,27 +343,21 @@ function migrateLegacyBenchmarkTrialsSheetForAppend_(sheet) {
 
 function resetBenchmarkSheets() {
   const trialsSheet = ensureBenchmarkTrialsSheet_();
-  const summarySheet = ensureBenchmarkSummarySheet_();
   const reviewSheet = ensureBenchmarkReviewSheet_();
 
   trialsSheet.clearContents();
-  summarySheet.clearContents();
   reviewSheet.clearContents();
 
   const trialsHeader = getBenchmarkTrialsHeader_();
-  const summaryHeader = getBenchmarkSummaryHeader_();
   const reviewHeader = getBenchmarkReviewHeader_();
 
   trialsSheet.getRange(1, 1, 1, trialsHeader.length).setValues([trialsHeader]);
-  summarySheet.getRange(1, 1, 1, summaryHeader.length).setValues([summaryHeader]);
   reviewSheet.getRange(1, 1, 1, reviewHeader.length).setValues([reviewHeader]);
 
   trialsSheet.setFrozenRows(1);
-  summarySheet.setFrozenRows(1);
   reviewSheet.setFrozenRows(1);
 
   trialsSheet.getRange(1, 1, 1, trialsHeader.length).setFontWeight("bold");
-  summarySheet.getRange(1, 1, 1, summaryHeader.length).setFontWeight("bold");
   reviewSheet.getRange(1, 1, 1, reviewHeader.length).setFontWeight("bold");
 
   Logger.log("Benchmark sheets reset.");
@@ -819,34 +794,32 @@ function buildBenchmarkReviewRows_() {
       rowObject[columnName] = sourceRow[i];
     }
 
-    rowObject.RunIdStatus = getBenchmarkRunIdStatus_(rowObject.RunId);
-
+    return {
+      ChunkCompletedAt: rowObject.ImportTimestamp || "",
+      CampaignFolderName: rowObject.CampaignFolderName || "",
+      RunId: rowObject.RunId || "",
+      TrialCount: rowObject.TrialCount || "",
+      ChunkIndex: rowObject.RepeatIndex || "",
+      BestScore: rowObject.BestScore || "",
+      ScoreDirection: "LOWER_IS_BETTER",
+      InvocationMode: rowObject.InvocationMode || "",
+      RuntimeSec: rowObject.RuntimeSec || "",
+      SummaryMessage: rowObject.SummaryMessage || "",
+      FailureMessage: rowObject.FailureMessage || "",
+      ScorerFingerprintShort: rowObject.ScorerFingerprintShort || ""
+    };
+  }).map(function(rowObject) {
     return reviewHeader.map(function(columnName) {
-      return Object.prototype.hasOwnProperty.call(rowObject, columnName)
-        ? rowObject[columnName]
-        : "";
+      return Object.prototype.hasOwnProperty.call(rowObject, columnName) ? rowObject[columnName] : "";
     });
   });
 }
 
 function refreshBenchmarkSummarySheet() {
-  const summarySheet = ensureBenchmarkSummarySheet_();
-  const header = getBenchmarkSummaryHeader_();
-  const rows = buildBenchmarkSummaryRows_();
-
-  summarySheet.clearContents();
-  summarySheet.getRange(1, 1, 1, header.length).setValues([header]);
-  summarySheet.setFrozenRows(1);
-  summarySheet.getRange(1, 1, 1, header.length).setFontWeight("bold");
-
-  if (rows.length > 0) {
-    summarySheet.getRange(2, 1, rows.length, header.length).setValues(rows);
-  }
-
   Logger.log(JSON.stringify({
     ok: true,
-    summaryRowCount: rows.length,
-    sheetName: getBenchmarkSummarySheetName_()
+    skipped: true,
+    message: "BENCHMARK_SUMMARY is retired from operational red-button flow."
   }, null, 2));
 }
 

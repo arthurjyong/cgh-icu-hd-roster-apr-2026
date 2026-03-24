@@ -230,6 +230,28 @@ async function uploadFile(drive, options) {
   return response.data;
 }
 
+async function findChildFileByName(drive, parentFolderId, fileName) {
+  const query = [
+    `'${escapeDriveQueryString(parentFolderId)}' in parents`,
+    `name='${escapeDriveQueryString(fileName)}'`,
+    'trashed=false'
+  ].join(' and ');
+
+  const response = await drive.files.list({
+    q: query,
+    fields: 'files(id,name,mimeType,parents)',
+    pageSize: 10,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  });
+
+  const files = Array.isArray(response.data && response.data.files) ? response.data.files : [];
+  if (files.length > 1) {
+    throw new Error(`Multiple files named ${fileName} were found in folder ${parentFolderId}.`);
+  }
+  return files.length === 1 ? files[0] : null;
+}
+
 async function uploadFinalArtifactsToDrive(options) {
   const source = options || {};
   const driveAuthGateway = source.driveAuthGateway;
@@ -250,14 +272,35 @@ async function uploadFinalArtifactsToDrive(options) {
   }
 
   const folderResolution = await resolveBenchmarkRunsFolder(drive, config);
-  const runFolder = await createRunFolderOrThrow(
+  const allowExistingRunFolder = source.allowExistingRunFolder === true;
+  const existingRunFolders = await listChildFoldersByName(
     drive,
     folderResolution.benchmarkRunsFolder.id,
     artifactSet.runFolderName
   );
+  if (existingRunFolders.length > 1) {
+    throw new Error(`Multiple run folders named ${artifactSet.runFolderName} were found under benchmark_runs.`);
+  }
+  let runFolder = null;
+  if (existingRunFolders.length === 1) {
+    if (!allowExistingRunFolder) {
+      throw new Error(
+        `Drive run folder already exists under benchmark_runs: ${artifactSet.runFolderName}. ` +
+        'Refusing to overwrite existing uploaded artifacts.'
+      );
+    }
+    runFolder = existingRunFolders[0];
+  } else {
+    runFolder = await createRunFolderOrThrow(
+      drive,
+      folderResolution.benchmarkRunsFolder.id,
+      artifactSet.runFolderName
+    );
+  }
 
   const folderCache = new Map();
   const uploadedFiles = [];
+  const replaceExistingFiles = source.replaceExistingFiles === true;
 
   for (const fileDescriptor of artifactSet.files) {
     const relativePath = String(fileDescriptor.relativePath || '').replace(/\\/g, '/');
@@ -278,10 +321,21 @@ async function uploadFinalArtifactsToDrive(options) {
       folderCache
     );
 
+    const targetFileName = pathParts[pathParts.length - 1];
+    if (replaceExistingFiles) {
+      const existingFile = await findChildFileByName(drive, parentFolder.id, targetFileName);
+      if (existingFile) {
+        await drive.files.delete({
+          fileId: existingFile.id,
+          supportsAllDrives: true
+        });
+      }
+    }
+
     const driveFile = await uploadFile(drive, {
       localPath: fileDescriptor.localPath,
       parentFolderId: parentFolder.id,
-      fileName: pathParts[pathParts.length - 1],
+      fileName: targetFileName,
       mimeType: fileDescriptor.mimeType || 'application/json'
     });
 
@@ -330,5 +384,6 @@ module.exports = {
   resolveNestedFolderPath,
   resolveOrCreateChildFolderByName,
   uploadFile,
+  findChildFileByName,
   uploadFinalArtifactsToDrive
 };
