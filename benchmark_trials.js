@@ -142,15 +142,24 @@ function getBenchmarkSummaryHeader_() {
 function getBenchmarkReviewHeader_() {
   return [
     "ChunkCompletedAt",
-    "CampaignFolderName",
     "RunId",
     "TrialCount",
     "ChunkIndex",
     "BestScore",
-    "ScoreDirection",
-    "InvocationMode",
+    "MeanPoints",
+    "StandardDeviation",
+    "Range",
+    "TotalScore",
+    "PointBalanceGlobal",
+    "PointBalanceWithinSection",
+    "SpacingPenalty",
+    "CrReward",
+    "DualEligibleIcuBonus",
+    "StandbyAdjacencyPenalty",
+    "StandbyCountFairnessPenalty",
+    "PreLeavePenalty",
+    "UnfilledPenalty",
     "RuntimeSec",
-    "SummaryMessage",
     "FailureMessage",
     "ScorerFingerprintShort"
   ];
@@ -243,7 +252,7 @@ function ensureBenchmarkTrialsSheet_() {
 
 function ensureBenchmarkReviewSheet_() {
   const sheet = ensureBenchmarkSheet_(getBenchmarkReviewSheetName_(), getBenchmarkReviewHeader_());
-  moveBenchmarkSheetToPosition_(sheet, 2);
+  moveBenchmarkSheetToPosition_(sheet, 3);
   return sheet;
 }
 
@@ -251,13 +260,13 @@ function moveBenchmarkSheetToPosition_(sheet, position) {
   if (!sheet || typeof position !== "number") {
     return;
   }
-  const targetIndex = Math.max(1, position);
+  const ss = SpreadsheetApp.getActive();
+  const sheetCount = ss.getSheets().length;
+  const targetIndex = Math.min(Math.max(1, position), Math.max(1, sheetCount));
   if (typeof sheet.setIndex === "function") {
     sheet.setIndex(targetIndex);
     return;
   }
-
-  const ss = SpreadsheetApp.getActive();
   const previousActive = ss.getActiveSheet();
   ss.setActiveSheet(sheet);
   ss.moveActiveSheet(targetIndex);
@@ -810,15 +819,24 @@ function buildBenchmarkReviewRows_() {
 
     return {
       ChunkCompletedAt: safeReviewCellValue_(rowObject.ImportTimestamp),
-      CampaignFolderName: safeReviewCellValue_(rowObject.CampaignFolderName),
       RunId: safeReviewCellValue_(rowObject.RunId),
       TrialCount: safeReviewCellValue_(rowObject.TrialCount),
       ChunkIndex: safeReviewCellValue_(rowObject.RepeatIndex),
       BestScore: safeReviewCellValue_(rowObject.BestScore),
-      ScoreDirection: "LOWER_IS_BETTER",
-      InvocationMode: safeReviewCellValue_(rowObject.InvocationMode),
+      MeanPoints: safeReviewCellValue_(rowObject.MeanPoints),
+      StandardDeviation: safeReviewCellValue_(rowObject.StandardDeviation),
+      Range: safeReviewCellValue_(rowObject.Range),
+      TotalScore: safeReviewCellValue_(rowObject.TotalScore),
+      PointBalanceGlobal: safeReviewCellValue_(rowObject.PointBalanceGlobal),
+      PointBalanceWithinSection: safeReviewCellValue_(rowObject.PointBalanceWithinSection),
+      SpacingPenalty: safeReviewCellValue_(rowObject.SpacingPenalty),
+      CrReward: safeReviewCellValue_(rowObject.CrReward),
+      DualEligibleIcuBonus: safeReviewCellValue_(rowObject.DualEligibleIcuBonus),
+      StandbyAdjacencyPenalty: safeReviewCellValue_(rowObject.StandbyAdjacencyPenalty),
+      StandbyCountFairnessPenalty: safeReviewCellValue_(rowObject.StandbyCountFairnessPenalty),
+      PreLeavePenalty: safeReviewCellValue_(rowObject.PreLeavePenalty),
+      UnfilledPenalty: safeReviewCellValue_(rowObject.UnfilledPenalty),
       RuntimeSec: safeReviewCellValue_(rowObject.RuntimeSec),
-      SummaryMessage: safeReviewCellValue_(rowObject.SummaryMessage),
       FailureMessage: safeReviewCellValue_(rowObject.FailureMessage),
       ScorerFingerprintShort: safeReviewCellValue_(rowObject.ScorerFingerprintShort)
     };
