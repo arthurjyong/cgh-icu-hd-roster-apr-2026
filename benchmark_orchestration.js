@@ -433,10 +433,10 @@ function buildBenchmarkReconciliationResult_(context) {
   const importAttempted = !!importResult;
   const importOk = !!(importResult && importResult.ok === true);
   const importSummary = importResult && importResult.summary ? importResult.summary : null;
-  const importedRunCount = importSummary && importSummary.importedRunCount !== undefined
+  const importedRunCount = importSummary && importSummary.importedRunCount !== undefined && importSummary.importedRunCount !== null
     ? Number(importSummary.importedRunCount)
     : null;
-  const reportCompletedCount = importSummary && importSummary.completedCount !== undefined
+  const reportCompletedCount = importSummary && importSummary.completedCount !== undefined && importSummary.completedCount !== null
     ? Number(importSummary.completedCount)
     : null;
   const importedCampaignFolderName = normalizeBenchmarkOrchestrationString_(
