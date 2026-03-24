@@ -2135,8 +2135,21 @@ function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportR
   }
 
   if (trimmedStringOrBlank_(rowObject.InvocationMode) && transportInvocationMode) {
-    if (trimmedStringOrBlank_(rowObject.InvocationMode) !== transportInvocationMode) {
-      issues.push("Selected BENCHMARK_TRIALS InvocationMode does not match transport invocationMode.");
+    const rowInvocationMode = normalizeBenchmarkInvocationModeForComparison_(rowObject.InvocationMode);
+    const transportInvocationModeForCompare = normalizeBenchmarkInvocationModeForComparison_(transportInvocationMode);
+
+    if (
+      rowInvocationMode.mode
+      && transportInvocationModeForCompare.mode
+      && rowInvocationMode.mode !== transportInvocationModeForCompare.mode
+      && rowInvocationMode.isKnownTrialComputeMode
+      && transportInvocationModeForCompare.isKnownTrialComputeMode
+    ) {
+      issues.push(
+        'Selected BENCHMARK_TRIALS InvocationMode does not match transport invocationMode. '
+        + 'Row InvocationMode="' + rowInvocationMode.raw + '", transport invocationMode="'
+        + transportInvocationModeForCompare.raw + '".'
+      );
     }
   }
 
@@ -2149,6 +2162,22 @@ function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportR
     : {
         ok: true
       };
+}
+
+function normalizeBenchmarkInvocationModeForComparison_(value) {
+  const raw = trimmedStringOrBlank_(value);
+  const mode = raw.toUpperCase();
+  const knownTrialComputeModes = {
+    LOCAL_DIRECT: true,
+    LOCAL_SIMULATED_EXTERNAL: true,
+    EXTERNAL_HTTP: true
+  };
+
+  return {
+    raw: raw,
+    mode: mode,
+    isKnownTrialComputeMode: !!knownTrialComputeModes[mode]
+  };
 }
 
 function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
@@ -2397,6 +2426,26 @@ function buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, includeTranspo
   return payload;
 }
 
+function updateBenchmarkUiAppliedMetadataFromSelection_(selection, sourceModeOverride) {
+  if (typeof writeBenchmarkUiAppliedRosterMetadata_ !== 'function') {
+    return;
+  }
+
+  const candidate = selection && selection.candidateRow ? selection.candidateRow : {};
+  const sourceMode = trimmedStringOrBlank_(sourceModeOverride)
+    || trimmedStringOrBlank_(candidate.InvocationMode)
+    || trimmedStringOrBlank_(selection && selection.transportResult && selection.transportResult.invocationMode)
+    || 'BENCHMARK_WRITEBACK';
+
+  writeBenchmarkUiAppliedRosterMetadata_({
+    lastAppliedBestScore: isFiniteNumberValue_(candidate.BestScore) ? Number(candidate.BestScore) : null,
+    lastAppliedRunId: trimmedStringOrBlank_(candidate.RunId),
+    lastAppliedCampaignFolder: trimmedStringOrBlank_(candidate.CampaignFolderName),
+    lastAppliedTimestamp: new Date(),
+    lastAppliedSourceMode: sourceMode
+  });
+}
+
 function debugInspectBenchmarkRunIdForWriteback(runId) {
   const selection = selectBenchmarkTrialsRunIdForWriteback_(runId);
   const payload = buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, false);
@@ -2407,6 +2456,7 @@ function debugInspectBenchmarkRunIdForWriteback(runId) {
 function runWriteBenchmarkRunIdToSheet(runId) {
   const selection = selectBenchmarkTrialsRunIdForWriteback_(runId);
   writeTransportTrialResultToSheet_(selection.transportResult);
+  updateBenchmarkUiAppliedMetadataFromSelection_(selection, 'BENCHMARK_WRITEBACK_SPECIFIC_RUN_ID');
 
   const payload = buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, false);
   payload.message = 'Specified benchmark RunId written to Sheet1 rows 35-38.';
@@ -2426,6 +2476,7 @@ function debugInspectBestBenchmarkTrialsWinnerForWriteback() {
 function runWriteBestBenchmarkTrialsWinnerToSheet() {
   const selection = selectBestBenchmarkTrialsWinnerForWriteback_();
   writeTransportTrialResultToSheet_(selection.transportResult);
+  updateBenchmarkUiAppliedMetadataFromSelection_(selection, 'BENCHMARK_WRITEBACK_CURRENT_BEST');
 
   const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false);
   payload.message = 'Best benchmark trials winner written to Sheet1 rows 35-38.';
