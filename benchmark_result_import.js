@@ -1636,6 +1636,20 @@ function buildBenchmarkTrialsWritebackComparisonGroups_(candidates) {
   });
 }
 
+function buildBenchmarkTrialsWritebackScopeRecoveryMessage_(requestedComparisonGroupKey) {
+  const requested = trimmedStringOrBlank_(requestedComparisonGroupKey);
+
+  if (requested) {
+    return (
+      'Update or clear the Default Writeback ComparisonGroupKey control in SCORER_CONFIG, refresh BENCHMARK_SUMMARY to copy a current ComparisonGroupKey, or choose an explicit RunId instead.'
+    );
+  }
+
+  return (
+    'Set the Default Writeback ComparisonGroupKey control in SCORER_CONFIG to a BENCHMARK_SUMMARY ComparisonGroupKey, or choose an explicit RunId instead.'
+  );
+}
+
 function formatBenchmarkTrialsWritebackComparisonGroupForError_(group) {
   const current = group || {};
   const candidateRows = Array.isArray(current.candidates) ? current.candidates : [];
@@ -1669,6 +1683,7 @@ function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
   const rows = Array.isArray(candidates) ? candidates : [];
   const options = scopeOptions || {};
   const requestedComparisonGroupKey = trimmedStringOrBlank_(options.comparisonGroupKey);
+  const recoveryMessage = buildBenchmarkTrialsWritebackScopeRecoveryMessage_(requestedComparisonGroupKey);
 
   if (rows.length === 0) {
     throw new Error(
@@ -1677,6 +1692,8 @@ function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
   }
 
   const groups = buildBenchmarkTrialsWritebackComparisonGroups_(rows);
+  let selectedGroup = null;
+  let selectionMode = "AUTO_SINGLE_GROUP_ONLY";
 
   if (requestedComparisonGroupKey) {
     const scopedGroup = groups.filter(function(group) {
@@ -1685,34 +1702,36 @@ function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
 
     if (scopedGroup.length === 0) {
       throw new Error(
-        'Requested comparison group "' + requestedComparisonGroupKey + '" was not found among valid BENCHMARK_TRIALS writeback candidates.'
+        'Requested comparison group "' + requestedComparisonGroupKey + '" was not found among valid BENCHMARK_TRIALS writeback candidates. ' +
+        'The saved scope may be stale after a REPLACE import or no longer present among valid rows. ' +
+        recoveryMessage
       );
     }
 
-    return {
-      groupCount: groups.length,
-      selectedGroup: scopedGroup[0],
-      scopedCandidates: scopedGroup[0].candidates.slice()
-    };
+    selectedGroup = scopedGroup[0];
+    selectionMode = "EXPLICIT_COMPARISON_GROUP_KEY";
+  } else {
+    if (groups.length > 1) {
+      throw new Error(
+        "Default benchmark winner writeback is blocked because valid BENCHMARK_TRIALS candidates span multiple comparison groups (" +
+        groups.length +
+        "). Automatic writeback only proceeds when exactly one valid comparison group is in scope. " +
+        recoveryMessage +
+        " Groups in scope: " +
+        groups.slice(0, 3).map(formatBenchmarkTrialsWritebackComparisonGroupForError_).join(" | ") +
+        (groups.length > 3 ? " | ..." : "")
+      );
+    }
+
+    selectedGroup = groups[0];
   }
 
-  if (groups.length > 1) {
-    throw new Error(
-      "Default benchmark winner writeback is blocked because valid BENCHMARK_TRIALS candidates span multiple comparison groups (" +
-      groups.length +
-      "). Automatic writeback only proceeds when exactly one valid comparison group is in scope. " +
-      "Choose an explicit RunId instead. Groups in scope: " +
-      groups.slice(0, 3).map(formatBenchmarkTrialsWritebackComparisonGroupForError_).join(" | ") +
-      (groups.length > 3 ? " | ..." : "")
-    );
-  }
-
-  const selectedGroup = groups[0];
   if (!selectedGroup || selectedGroup.comparisonStatus !== "STRICT") {
     throw new Error(
-      "Default benchmark winner writeback is blocked because the only comparison group in scope is not valid for automatic selection. " +
+      "Default benchmark winner writeback is blocked because the selected comparison group is not valid for automatic selection. " +
       "Automatic writeback requires complete comparable metadata (SnapshotFileSha256 + ScorerFingerprint) on all candidate rows. " +
-      "Choose an explicit RunId instead. Group in scope: " +
+      recoveryMessage +
+      " Group in scope: " +
       formatBenchmarkTrialsWritebackComparisonGroupForError_(selectedGroup)
     );
   }
@@ -1720,7 +1739,8 @@ function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
   return {
     groupCount: groups.length,
     selectedGroup: selectedGroup,
-    scopedCandidates: selectedGroup.candidates.slice()
+    scopedCandidates: selectedGroup.candidates.slice(),
+    selectionMode: selectionMode
   };
 }
 
@@ -2070,6 +2090,34 @@ function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
   };
 }
 
+function resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions) {
+  const options = scopeOptions || {};
+  const requestedComparisonGroupKey = trimmedStringOrBlank_(options.comparisonGroupKey);
+
+  if (requestedComparisonGroupKey) {
+    return {
+      comparisonGroupKey: requestedComparisonGroupKey,
+      scopeSelectionMode: 'EXPLICIT_COMPARISON_GROUP_KEY',
+      scopeSelectionSource: trimmedStringOrBlank_(options.scopeSelectionSource) || 'CALLER_OVERRIDE'
+    };
+  }
+
+  const uiComparisonGroupKey = trimmedStringOrBlank_(readBenchmarkUiDefaultWritebackComparisonGroupKeyIfAvailable_());
+  if (uiComparisonGroupKey) {
+    return {
+      comparisonGroupKey: uiComparisonGroupKey,
+      scopeSelectionMode: 'EXPLICIT_COMPARISON_GROUP_KEY',
+      scopeSelectionSource: 'BENCHMARK_UI_CONTROL_PANEL'
+    };
+  }
+
+  return {
+    comparisonGroupKey: '',
+    scopeSelectionMode: 'AUTO_SINGLE_GROUP_ONLY',
+    scopeSelectionSource: 'AUTO_SINGLE_GROUP_ONLY'
+  };
+}
+
 function buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates) {
   const rows = Array.isArray(candidates) ? candidates : [];
 
@@ -2088,12 +2136,13 @@ function buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candid
   });
 }
 
-function selectBestBenchmarkTrialsWinnerForWriteback_() {
+function selectBestBenchmarkTrialsWinnerForWriteback_(scopeOptions) {
   const trialsData = readBenchmarkTrialsRowsAsObjects_();
   const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
   assertNoDuplicateBenchmarkTrialsRunIds_(candidates, 'valid writeback candidates');
   const validatedCandidates = buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates);
-  const scope = resolveBenchmarkTrialsWritebackScope_(validatedCandidates);
+  const resolvedScopeOptions = resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions);
+  const scope = resolveBenchmarkTrialsWritebackScope_(validatedCandidates, resolvedScopeOptions);
   const campaignFolderName = resolveSingleCampaignFolderInTrialsSheet_(scope.scopedCandidates);
   const campaignCandidates = scope.scopedCandidates.filter(function(candidate) {
     return candidate.CampaignFolderName === campaignFolderName;
@@ -2108,6 +2157,9 @@ function selectBestBenchmarkTrialsWinnerForWriteback_() {
     candidateCount: candidates.length,
     comparisonGroupCount: scope.groupCount,
     comparisonGroup: scope.selectedGroup,
+    requestedComparisonGroupKey: resolvedScopeOptions.comparisonGroupKey || '',
+    scopeSelectionMode: scope.selectionMode || resolvedScopeOptions.scopeSelectionMode || 'AUTO_SINGLE_GROUP_ONLY',
+    scopeSelectionSource: resolvedScopeOptions.scopeSelectionSource || 'AUTO_SINGLE_GROUP_ONLY',
     campaignFolderName: campaignFolderName,
     candidateRow: bestCandidate,
     loadedArtifact: loadedArtifact,
@@ -2129,6 +2181,9 @@ function buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, includeTr
     trialsDataRowCount: selection.trialsDataRowCount,
     candidateCount: selection.candidateCount,
     comparisonGroupCount: selection.comparisonGroupCount,
+    requestedComparisonGroupKey: selection.requestedComparisonGroupKey || null,
+    scopeSelectionMode: selection.scopeSelectionMode || null,
+    scopeSelectionSource: selection.scopeSelectionSource || null,
     comparisonGroupKey: selection.comparisonGroup ? selection.comparisonGroup.comparisonGroupKey || null : null,
     comparisonStatus: selection.comparisonGroup ? selection.comparisonGroup.comparisonStatus || null : null,
     comparisonStatusReason: selection.comparisonGroup ? selection.comparisonGroup.comparisonStatusReason || null : null,
