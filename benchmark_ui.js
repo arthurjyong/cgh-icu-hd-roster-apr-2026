@@ -73,6 +73,21 @@ function getBenchmarkUiTargetMaxTrialCountBounds_() {
   };
 }
 
+function buildBenchmarkUiTargetMaxTrialCountValidationForRange_(targetRange) {
+  const bounds = getBenchmarkUiTargetMaxTrialCountBounds_();
+  const targetA1 = targetRange.getA1Notation();
+
+  return SpreadsheetApp.newDataValidation()
+    .requireFormulaSatisfied(
+      '=AND(ISNUMBER(' + targetA1 + '),' +
+      targetA1 + '=INT(' + targetA1 + '),' +
+      targetA1 + '>=' + bounds.min + ',' +
+      targetA1 + '<=' + bounds.max + ')'
+    )
+    .setAllowInvalid(false)
+    .build();
+}
+
 
 function getBenchmarkUiNamedRangeTargetA1Map_() {
   return {
@@ -357,18 +372,7 @@ function ensureBenchmarkUiTextControlPlaceholder_(controlKey, placeholder) {
 function initializeBenchmarkUiControls_() {
   const installResult = installBenchmarkUiNamedRanges_();
   const targetRange = resolveBenchmarkUiControlRange_('targetMaxTrialCount');
-  const bounds = getBenchmarkUiTargetMaxTrialCountBounds_();
-  const targetA1 = targetRange.getA1Notation();
-  const validation = SpreadsheetApp.newDataValidation()
-    .requireFormulaSatisfied(
-      '=AND(ISNUMBER(' + targetA1 + '),' +
-      targetA1 + '=INT(' + targetA1 + '),' +
-      targetA1 + '>=' + bounds.min + ',' +
-      targetA1 + '<=' + bounds.max + ')'
-    )
-    .setAllowInvalid(false)
-    .build();
-
+  const validation = buildBenchmarkUiTargetMaxTrialCountValidationForRange_(targetRange);
   targetRange.setDataValidation(validation);
   if (!normalizeBenchmarkUiString_(targetRange.getValue())) {
     targetRange.setValue(String(getBenchmarkUiConfig_().fixedChunkSize));
@@ -513,6 +517,20 @@ function restoreBenchmarkUiPlaceholdersOnEdit_(e) {
   }
 }
 
+function applyOneTimeTargetMaxTrialCountValidationFix_() {
+  const sheet = getBenchmarkUiSheet_();
+  const targetRange = sheet.getRange('B18');
+  const validation = buildBenchmarkUiTargetMaxTrialCountValidationForRange_(targetRange);
+  targetRange.setDataValidation(validation);
+
+  return {
+    ok: true,
+    sheetName: sheet.getName(),
+    cell: targetRange.getA1Notation(),
+    bounds: getBenchmarkUiTargetMaxTrialCountBounds_()
+  };
+}
+
 
 function installBenchmarkUiNamedRanges() {
   return installBenchmarkUiNamedRanges_();
@@ -528,6 +546,10 @@ function debugBenchmarkUiControlMap() {
 
 function debugReadBenchmarkUiControlState() {
   return debugReadBenchmarkUiControlState_();
+}
+
+function applyOneTimeTargetMaxTrialCountValidationFix() {
+  return applyOneTimeTargetMaxTrialCountValidationFix_();
 }
 
 function onEdit(e) {
