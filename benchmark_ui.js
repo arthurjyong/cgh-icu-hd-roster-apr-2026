@@ -245,10 +245,16 @@ function deriveBenchmarkCampaignChunkPlanFromTarget_(targetMaxTrialCount) {
     };
   }
 
+  const campaignTrialCounts = [];
+  for (let i = 0; i < fullChunkRepeats; i++) {
+    campaignTrialCounts.push(chunkSize);
+  }
+  campaignTrialCounts.push(remainder);
+
   return {
     chunkSize: chunkSize,
-    campaignTrialCounts: [chunkSize, remainder],
-    campaignRepeats: fullChunkRepeats
+    campaignTrialCounts: campaignTrialCounts,
+    campaignRepeats: 1
   };
 }
 
