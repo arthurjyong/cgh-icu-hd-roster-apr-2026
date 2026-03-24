@@ -4,7 +4,7 @@ function getBenchmarkOrchestrationDefaults_() {
     statusPath: '/campaigns/status',
     artifactFileName: 'benchmark_campaign_report_v1.json',
     pollEveryMinutes: 1,
-    repeats: 3,
+    repeats: 1,
     statePrefix: 'BENCHMARK_ORCHESTRATION_',
     activeStatusValues: {
       pending: 'PENDING',
@@ -198,6 +198,19 @@ function buildBenchmarkCampaignStartPayload_(snapshotExportResult, uiState) {
   const ui = uiState || readBenchmarkUiControlState_();
   const exportInfo = snapshotExportResult.export || {};
   const baseSeed = resolveBenchmarkCampaignSeedFromUi_(ui);
+  const chunkSize = 1000;
+  let campaignTrialCounts = ui.expandedTrialCounts;
+  let campaignRepeats = getBenchmarkOrchestrationDefaults_().repeats;
+
+  if (
+    ui.targetMaxTrialCount > chunkSize
+    && ui.targetMaxTrialCount % chunkSize === 0
+    && campaignTrialCounts.length === 1
+    && campaignTrialCounts[0] === chunkSize
+  ) {
+    campaignRepeats = ui.targetMaxTrialCount / chunkSize;
+  }
+
   return {
     mode: 'CAMPAIGN',
     source: 'APPS_SCRIPT_UI',
@@ -205,8 +218,8 @@ function buildBenchmarkCampaignStartPayload_(snapshotExportResult, uiState) {
     spreadsheetName: SpreadsheetApp.getActive().getName(),
     sheetName: SpreadsheetApp.getActiveSheet().getName(),
     targetMaxTrialCount: ui.targetMaxTrialCount,
-    campaignTrialCounts: ui.expandedTrialCounts,
-    campaignRepeats: getBenchmarkOrchestrationDefaults_().repeats,
+    campaignTrialCounts: campaignTrialCounts,
+    campaignRepeats: campaignRepeats,
     baseSeed: baseSeed,
     campaignBatchLabel: buildBenchmarkCampaignBatchLabelFromUi_(ui.targetMaxTrialCount),
     snapshot: {
