@@ -230,6 +230,37 @@ async function uploadFile(drive, options) {
   return response.data;
 }
 
+async function updateFileContent(drive, options) {
+  const source = options || {};
+  const localPath = path.resolve(source.localPath);
+  const fileId = source.fileId;
+  const fileName = source.fileName || path.basename(localPath);
+  const mimeType = source.mimeType || 'application/json';
+
+  if (!fileId) {
+    throw new Error('updateFileContent requires fileId.');
+  }
+
+  if (!fs.existsSync(localPath)) {
+    throw new Error(`Upload source file not found: ${localPath}`);
+  }
+
+  const response = await drive.files.update({
+    fileId,
+    requestBody: {
+      name: fileName
+    },
+    media: {
+      mimeType,
+      body: fs.createReadStream(localPath)
+    },
+    fields: 'id,name,mimeType,parents,size',
+    supportsAllDrives: true
+  });
+
+  return response.data;
+}
+
 async function findChildFileByName(drive, parentFolderId, fileName) {
   const query = [
     `'${escapeDriveQueryString(parentFolderId)}' in parents`,
@@ -322,22 +353,29 @@ async function uploadFinalArtifactsToDrive(options) {
     );
 
     const targetFileName = pathParts[pathParts.length - 1];
+    let driveFile = null;
+    const existingFile = replaceExistingFiles
+      ? await findChildFileByName(drive, parentFolder.id, targetFileName)
+      : null;
     if (replaceExistingFiles) {
-      const existingFile = await findChildFileByName(drive, parentFolder.id, targetFileName);
       if (existingFile) {
-        await drive.files.delete({
+        driveFile = await updateFileContent(drive, {
           fileId: existingFile.id,
-          supportsAllDrives: true
+          localPath: fileDescriptor.localPath,
+          fileName: targetFileName,
+          mimeType: fileDescriptor.mimeType || 'application/json'
         });
       }
     }
 
-    const driveFile = await uploadFile(drive, {
-      localPath: fileDescriptor.localPath,
-      parentFolderId: parentFolder.id,
-      fileName: targetFileName,
-      mimeType: fileDescriptor.mimeType || 'application/json'
-    });
+    if (!driveFile) {
+      driveFile = await uploadFile(drive, {
+        localPath: fileDescriptor.localPath,
+        parentFolderId: parentFolder.id,
+        fileName: targetFileName,
+        mimeType: fileDescriptor.mimeType || 'application/json'
+      });
+    }
 
     uploadedFiles.push({
       relativePath,
@@ -384,6 +422,7 @@ module.exports = {
   resolveNestedFolderPath,
   resolveOrCreateChildFolderByName,
   uploadFile,
+  updateFileContent,
   findChildFileByName,
   uploadFinalArtifactsToDrive
 };

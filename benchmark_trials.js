@@ -251,9 +251,23 @@ function moveBenchmarkSheetToPosition_(sheet, position) {
   if (!sheet || typeof position !== "number") {
     return;
   }
+  const targetIndex = Math.max(1, position);
+  if (typeof sheet.setIndex === "function") {
+    sheet.setIndex(targetIndex);
+    return;
+  }
+
   const ss = SpreadsheetApp.getActive();
+  const previousActive = ss.getActiveSheet();
   ss.setActiveSheet(sheet);
-  ss.moveActiveSheet(Math.max(1, position));
+  ss.moveActiveSheet(targetIndex);
+  if (previousActive && previousActive.getSheetId() !== sheet.getSheetId()) {
+    ss.setActiveSheet(previousActive);
+  }
+}
+
+function safeReviewCellValue_(value) {
+  return value === null || value === undefined ? "" : value;
 }
 
 function writeBenchmarkSheetHeaderRow_(sheet, headerRow) {
@@ -795,18 +809,18 @@ function buildBenchmarkReviewRows_() {
     }
 
     return {
-      ChunkCompletedAt: rowObject.ImportTimestamp || "",
-      CampaignFolderName: rowObject.CampaignFolderName || "",
-      RunId: rowObject.RunId || "",
-      TrialCount: rowObject.TrialCount || "",
-      ChunkIndex: rowObject.RepeatIndex || "",
-      BestScore: rowObject.BestScore || "",
+      ChunkCompletedAt: safeReviewCellValue_(rowObject.ImportTimestamp),
+      CampaignFolderName: safeReviewCellValue_(rowObject.CampaignFolderName),
+      RunId: safeReviewCellValue_(rowObject.RunId),
+      TrialCount: safeReviewCellValue_(rowObject.TrialCount),
+      ChunkIndex: safeReviewCellValue_(rowObject.RepeatIndex),
+      BestScore: safeReviewCellValue_(rowObject.BestScore),
       ScoreDirection: "LOWER_IS_BETTER",
-      InvocationMode: rowObject.InvocationMode || "",
-      RuntimeSec: rowObject.RuntimeSec || "",
-      SummaryMessage: rowObject.SummaryMessage || "",
-      FailureMessage: rowObject.FailureMessage || "",
-      ScorerFingerprintShort: rowObject.ScorerFingerprintShort || ""
+      InvocationMode: safeReviewCellValue_(rowObject.InvocationMode),
+      RuntimeSec: safeReviewCellValue_(rowObject.RuntimeSec),
+      SummaryMessage: safeReviewCellValue_(rowObject.SummaryMessage),
+      FailureMessage: safeReviewCellValue_(rowObject.FailureMessage),
+      ScorerFingerprintShort: safeReviewCellValue_(rowObject.ScorerFingerprintShort)
     };
   }).map(function(rowObject) {
     return reviewHeader.map(function(columnName) {
