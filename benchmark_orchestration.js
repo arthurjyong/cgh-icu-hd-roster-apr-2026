@@ -869,6 +869,7 @@ function pollActiveBenchmarkCampaign_() {
 
   if (projectedState === 'COMPLETE') {
     let finalAutoApplyResult = null;
+    let finalAutoApplyWarning = '';
     try {
       finalAutoApplyResult = maybeAutoApplyOperationalBestWinner_({
         campaignFolderName: state.campaignFolderName,
@@ -880,13 +881,23 @@ function pollActiveBenchmarkCampaign_() {
         applied: false,
         message: String(err && err.message ? err.message : err)
       };
-      warningMessages.push('Final auto-apply failed: ' + finalAutoApplyResult.message);
+      finalAutoApplyWarning = 'Final auto-apply failed: ' + finalAutoApplyResult.message;
+      warningMessages.push(finalAutoApplyWarning);
       Logger.log(JSON.stringify({
         ok: false,
         stage: 'auto_apply_operational_final_uncaught',
         campaignId: state.campaignId || '',
         message: finalAutoApplyResult.message
       }, null, 2));
+    }
+    if (finalAutoApplyWarning) {
+      writeBenchmarkUiOperationalHealth_({
+        statusSource: statusResponse.contractVersion ? 'BACKEND_STATUS_FILE' : 'ORCHESTRATOR_RUNTIME',
+        freshness: freshness.bucket,
+        reconciliationState: reconciliation.reconciliationState,
+        warning: warningMessages.join(' | '),
+        lastBackendConfirmedAt: statusResponse.lastUpdated || statusResponse.completedAt || ''
+      });
     }
     if (!autoApplyResult) {
       autoApplyResult = finalAutoApplyResult;
