@@ -261,6 +261,7 @@ function applyBenchmarkReviewNumberFormatting_(sheet) {
     return;
   }
 
+  sheet.getRange("E:E").setNumberFormat("0.############");
   sheet.getRange("I:R").setNumberFormat("0.############");
   sheet.getRange("F:F").setNumberFormat("0.00");
   sheet.getRange("G:G").setNumberFormat("0.00");
