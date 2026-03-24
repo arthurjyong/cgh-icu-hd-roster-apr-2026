@@ -15,7 +15,7 @@ function getScoringContractVersion_() {
 }
 
 function getScorerLogicVersion_() {
-  return "phase3_scorer_identity_v1";
+  return "phase3_scorer_identity_v2_cr_reward_decay";
 }
 
 function getScorerComponentKeys_() {
@@ -709,6 +709,7 @@ function computeCrReward_(scoringContext, scorerWeights) {
     : [];
 
   const crCallReward = scorerWeights.CR_CALL_REWARD;
+  const crRewardDecayFactor = 0.5;
 
   let satisfiedCrCallCount = 0;
   let totalScore = 0;
@@ -730,10 +731,13 @@ function computeCrReward_(scoringContext, scorerWeights) {
         continue;
       }
 
+      const rewardMultiplier = Math.pow(crRewardDecayFactor, doctorSatisfiedCount);
+      const reward = crCallReward * rewardMultiplier;
+
       doctorSatisfiedCount += 1;
       satisfiedCrCallCount += 1;
-      doctorScore += crCallReward;
-      totalScore += crCallReward;
+      doctorScore += reward;
+      totalScore += reward;
 
       const occurrence = {
         doctorId: row.doctorId,
@@ -741,7 +745,9 @@ function computeCrReward_(scoringContext, scorerWeights) {
         section: row.section,
         dateKey: assignment.dateKey,
         slotKey: assignment.slotKey,
-        reward: crCallReward,
+        reward: reward,
+        rewardMultiplier: rewardMultiplier,
+        rewardBase: crCallReward,
         rawText: assignment.rawText || "",
         codes: assignment.codes ? assignment.codes.slice() : []
       };
@@ -763,6 +769,7 @@ function computeCrReward_(scoringContext, scorerWeights) {
   return {
     ok: true,
     rewardPerOccurrence: crCallReward,
+    rewardDecayFactor: crRewardDecayFactor,
     satisfiedCrCallCount: satisfiedCrCallCount,
     score: totalScore,
     byDoctorId: byDoctorId,
