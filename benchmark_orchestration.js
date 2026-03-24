@@ -868,10 +868,26 @@ function pollActiveBenchmarkCampaign_() {
   });
 
   if (projectedState === 'COMPLETE') {
-    const finalAutoApplyResult = maybeAutoApplyOperationalBestWinner_({
-      campaignFolderName: state.campaignFolderName,
-      sourceMode: 'OPERATIONAL_FINAL'
-    });
+    let finalAutoApplyResult = null;
+    try {
+      finalAutoApplyResult = maybeAutoApplyOperationalBestWinner_({
+        campaignFolderName: state.campaignFolderName,
+        sourceMode: 'OPERATIONAL_FINAL'
+      });
+    } catch (err) {
+      finalAutoApplyResult = {
+        ok: false,
+        applied: false,
+        message: String(err && err.message ? err.message : err)
+      };
+      warningMessages.push('Final auto-apply failed: ' + finalAutoApplyResult.message);
+      Logger.log(JSON.stringify({
+        ok: false,
+        stage: 'auto_apply_operational_final_uncaught',
+        campaignId: state.campaignId || '',
+        message: finalAutoApplyResult.message
+      }, null, 2));
+    }
     if (!autoApplyResult) {
       autoApplyResult = finalAutoApplyResult;
     }
