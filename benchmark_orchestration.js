@@ -342,7 +342,37 @@ function buildCompactBenchmarkCampaignStateSummary_(state) {
   };
 }
 
+function ensureBenchmarkTabsCompleteOrReset_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const requiredSheetNames = [
+    getBenchmarkTrialsSheetName_(),
+    getBenchmarkSummarySheetName_(),
+    getBenchmarkReviewSheetName_()
+  ];
+  const missingSheetNames = [];
+  for (let i = 0; i < requiredSheetNames.length; i++) {
+    const requiredName = requiredSheetNames[i];
+    if (!spreadsheet.getSheetByName(requiredName)) {
+      missingSheetNames.push(requiredName);
+    }
+  }
+  if (missingSheetNames.length > 0) {
+    resetBenchmarkSheets();
+    return {
+      ok: true,
+      resetTriggered: true,
+      missingSheetNames: missingSheetNames
+    };
+  }
+  return {
+    ok: true,
+    resetTriggered: false,
+    missingSheetNames: []
+  };
+}
+
 function startBenchmarkCampaignFromUi_() {
+  const benchmarkTabGuard = ensureBenchmarkTabsCompleteOrReset_();
   initializeBenchmarkUiControls_();
   const uiState = readBenchmarkUiControlState_();
   const target = uiState.targetMaxTrialCount;
@@ -400,7 +430,8 @@ function startBenchmarkCampaignFromUi_() {
     snapshotFileName: snapshotExport.export ? snapshotExport.export.fileName : '',
     snapshotFileId: snapshotExport.export ? snapshotExport.export.fileId : '',
     orchestratorBaseUrl: config.baseUrl,
-    pollTriggerUniqueId: getActiveBenchmarkCampaignState_().pollTriggerUniqueId
+    pollTriggerUniqueId: getActiveBenchmarkCampaignState_().pollTriggerUniqueId,
+    benchmarkTabGuard: benchmarkTabGuard
   };
   Logger.log(JSON.stringify(compact, null, 2));
   return compact;
