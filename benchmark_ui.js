@@ -241,6 +241,14 @@ function readBenchmarkUiDefaultWritebackComparisonGroupKey_() {
   return normalized === getBenchmarkUiConfig_().defaultWritebackComparisonGroupKeyPlaceholder ? '' : normalized;
 }
 
+function readBenchmarkUiDefaultWritebackComparisonGroupKeyIfAvailable_() {
+  try {
+    return readBenchmarkUiDefaultWritebackComparisonGroupKey_();
+  } catch (err) {
+    return '';
+  }
+}
+
 function readBenchmarkUiSeedOverride_() {
   const control = resolveBenchmarkUiControlRange_('seedOverride');
   return normalizeBenchmarkUiString_(control.getValue());

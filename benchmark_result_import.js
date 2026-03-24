@@ -2102,8 +2102,7 @@ function resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions) {
     };
   }
 
-  const uiState = readBenchmarkUiControlState_();
-  const uiComparisonGroupKey = trimmedStringOrBlank_(uiState.defaultWritebackComparisonGroupKey);
+  const uiComparisonGroupKey = trimmedStringOrBlank_(readBenchmarkUiDefaultWritebackComparisonGroupKeyIfAvailable_());
   if (uiComparisonGroupKey) {
     return {
       comparisonGroupKey: uiComparisonGroupKey,
