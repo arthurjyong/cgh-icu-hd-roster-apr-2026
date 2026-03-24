@@ -32,6 +32,7 @@ const DEFAULT_TRIAL_COUNTS = Object.freeze([
   1000000,
   5000000
 ]);
+const DEFAULT_LADDER = DEFAULT_TRIAL_COUNTS;
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
