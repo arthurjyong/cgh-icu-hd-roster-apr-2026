@@ -2135,8 +2135,21 @@ function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportR
   }
 
   if (trimmedStringOrBlank_(rowObject.InvocationMode) && transportInvocationMode) {
-    if (trimmedStringOrBlank_(rowObject.InvocationMode) !== transportInvocationMode) {
-      issues.push("Selected BENCHMARK_TRIALS InvocationMode does not match transport invocationMode.");
+    const rowInvocationMode = normalizeBenchmarkInvocationModeForComparison_(rowObject.InvocationMode);
+    const transportInvocationModeForCompare = normalizeBenchmarkInvocationModeForComparison_(transportInvocationMode);
+
+    if (
+      rowInvocationMode.mode
+      && transportInvocationModeForCompare.mode
+      && rowInvocationMode.mode !== transportInvocationModeForCompare.mode
+      && rowInvocationMode.isKnownTrialComputeMode
+      && transportInvocationModeForCompare.isKnownTrialComputeMode
+    ) {
+      issues.push(
+        'Selected BENCHMARK_TRIALS InvocationMode does not match transport invocationMode. '
+        + 'Row InvocationMode="' + rowInvocationMode.raw + '", transport invocationMode="'
+        + transportInvocationModeForCompare.raw + '".'
+      );
     }
   }
 
@@ -2149,6 +2162,22 @@ function validateBenchmarkTrialsRowAgainstTransportResult_(rowObject, transportR
     : {
         ok: true
       };
+}
+
+function normalizeBenchmarkInvocationModeForComparison_(value) {
+  const raw = trimmedStringOrBlank_(value);
+  const mode = raw.toUpperCase();
+  const knownTrialComputeModes = {
+    LOCAL_DIRECT: true,
+    LOCAL_SIMULATED_EXTERNAL: true,
+    EXTERNAL_HTTP: true
+  };
+
+  return {
+    raw: raw,
+    mode: mode,
+    isKnownTrialComputeMode: !!knownTrialComputeModes[mode]
+  };
 }
 
 function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
@@ -2397,6 +2426,138 @@ function buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, includeTranspo
   return payload;
 }
 
+function updateBenchmarkUiAppliedMetadataFromSelection_(selection, sourceModeOverride) {
+  const candidate = selection && selection.candidateRow ? selection.candidateRow : {};
+  const sourceMode = trimmedStringOrBlank_(sourceModeOverride)
+    || trimmedStringOrBlank_(candidate.InvocationMode)
+    || trimmedStringOrBlank_(selection && selection.transportResult && selection.transportResult.invocationMode)
+    || 'BENCHMARK_WRITEBACK';
+  const metadataPayload = {
+    lastAppliedBestScore: isFiniteNumberValue_(candidate.BestScore) ? Number(candidate.BestScore) : null,
+    lastAppliedRunId: trimmedStringOrBlank_(candidate.RunId),
+    lastAppliedCampaignFolder: trimmedStringOrBlank_(candidate.CampaignFolderName),
+    lastAppliedTimestamp: new Date(),
+    lastAppliedSourceMode: sourceMode
+  };
+
+  try {
+    if (typeof writeBenchmarkUiAppliedRosterMetadata_ === 'function') {
+      writeBenchmarkUiAppliedRosterMetadata_(metadataPayload);
+      return {
+        ok: true,
+        method: 'NAMED_RANGE_HELPER'
+      };
+    }
+  } catch (err) {
+    const fallbackResult = writeBenchmarkUiAppliedRosterMetadataFallback_(metadataPayload);
+    if (fallbackResult.ok === true) {
+      return {
+        ok: true,
+        method: 'FALLBACK_CELLS',
+        warning: {
+          reason: 'WRITEBACK_UI_METADATA_HELPER_FAILED',
+          message: String(err && err.message ? err.message : err)
+        }
+      };
+    }
+
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'WRITEBACK_UI_METADATA_UPDATE_FAILED',
+      message: String(err && err.message ? err.message : err),
+      fallback: fallbackResult
+    };
+  }
+
+  return writeBenchmarkUiAppliedRosterMetadataFallback_(metadataPayload);
+}
+
+function writeBenchmarkUiAppliedRosterMetadataFallback_(metadata) {
+  try {
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet ? spreadsheet.getSheetByName('SCORER_CONFIG') : null;
+
+    if (!sheet) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'SCORER_CONFIG_SHEET_NOT_FOUND'
+      };
+    }
+
+    sheet.getRange('B35').setNumberFormat('0');
+    sheet.getRange('B35').setValue(
+      metadata.lastAppliedBestScore === null || metadata.lastAppliedBestScore === undefined
+        ? ''
+        : metadata.lastAppliedBestScore
+    );
+    sheet.getRange('B36').setNumberFormat('@');
+    sheet.getRange('B36').setValue(metadata.lastAppliedRunId || '');
+    sheet.getRange('B37').setNumberFormat('@');
+    sheet.getRange('B37').setValue(metadata.lastAppliedCampaignFolder || '');
+    sheet.getRange('B38').setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    sheet.getRange('B38').setValue(
+      metadata.lastAppliedTimestamp instanceof Date ? metadata.lastAppliedTimestamp : new Date()
+    );
+    sheet.getRange('B39').setNumberFormat('@');
+    sheet.getRange('B39').setValue(metadata.lastAppliedSourceMode || '');
+
+    return {
+      ok: true,
+      method: 'FALLBACK_CELLS'
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'WRITEBACK_UI_METADATA_FALLBACK_FAILED',
+      message: String(err && err.message ? err.message : err)
+    };
+  }
+}
+
+function readBenchmarkUiAppliedMetadataSafe_() {
+  try {
+    if (typeof readBenchmarkUiAppliedRosterMetadata_ === 'function') {
+      return {
+        ok: true,
+        source: 'BENCHMARK_UI_HELPER',
+        value: readBenchmarkUiAppliedRosterMetadata_()
+      };
+    }
+
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet ? spreadsheet.getSheetByName('SCORER_CONFIG') : null;
+    if (!sheet) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'SCORER_CONFIG_SHEET_NOT_FOUND'
+      };
+    }
+
+    return {
+      ok: true,
+      source: 'FALLBACK_CELLS',
+      value: {
+        lastAppliedBestScore: sheet.getRange('B35').getValue(),
+        lastAppliedRunId: sheet.getRange('B36').getValue(),
+        lastAppliedCampaignFolder: sheet.getRange('B37').getValue(),
+        lastAppliedTimestamp: sheet.getRange('B38').getValue(),
+        lastAppliedSourceMode: sheet.getRange('B39').getValue()
+      }
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'READ_APPLIED_METADATA_FAILED',
+      message: String(err && err.message ? err.message : err)
+    };
+  }
+}
+
 function debugInspectBenchmarkRunIdForWriteback(runId) {
   const selection = selectBenchmarkTrialsRunIdForWriteback_(runId);
   const payload = buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, false);
@@ -2407,9 +2568,15 @@ function debugInspectBenchmarkRunIdForWriteback(runId) {
 function runWriteBenchmarkRunIdToSheet(runId) {
   const selection = selectBenchmarkTrialsRunIdForWriteback_(runId);
   writeTransportTrialResultToSheet_(selection.transportResult);
+  const uiMetadataUpdate = updateBenchmarkUiAppliedMetadataFromSelection_(
+    selection,
+    'BENCHMARK_WRITEBACK_SPECIFIC_RUN_ID'
+  );
 
   const payload = buildBenchmarkTrialsRunIdWritebackLogPayload_(selection, false);
   payload.message = 'Specified benchmark RunId written to Sheet1 rows 35-38.';
+  payload.uiMetadataUpdate = uiMetadataUpdate;
+  payload.appliedMetadataAfterWriteback = readBenchmarkUiAppliedMetadataSafe_();
 
   Logger.log(JSON.stringify(payload, null, 2));
   return payload;
@@ -2426,9 +2593,15 @@ function debugInspectBestBenchmarkTrialsWinnerForWriteback() {
 function runWriteBestBenchmarkTrialsWinnerToSheet() {
   const selection = selectBestBenchmarkTrialsWinnerForWriteback_();
   writeTransportTrialResultToSheet_(selection.transportResult);
+  const uiMetadataUpdate = updateBenchmarkUiAppliedMetadataFromSelection_(
+    selection,
+    'BENCHMARK_WRITEBACK_CURRENT_BEST'
+  );
 
   const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false);
   payload.message = 'Best benchmark trials winner written to Sheet1 rows 35-38.';
+  payload.uiMetadataUpdate = uiMetadataUpdate;
+  payload.appliedMetadataAfterWriteback = readBenchmarkUiAppliedMetadataSafe_();
 
   Logger.log(JSON.stringify(payload, null, 2));
   return payload;
