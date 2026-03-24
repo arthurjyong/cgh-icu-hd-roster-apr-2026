@@ -787,14 +787,31 @@ function pollActiveBenchmarkCampaign_() {
       importAttempted = true;
       writeBenchmarkUiStatus_('IMPORTING');
       importResult = refreshBenchmarkTablesFromCampaignFolder_(state.campaignFolderName);
-      autoApplyResult = maybeAutoApplyOperationalBestWinner_({
-        campaignFolderName: state.campaignFolderName,
-        sourceMode: 'OPERATIONAL_MID_RUN'
-      });
+      if (importResult && importResult.ok === true) {
+        autoApplyResult = maybeAutoApplyOperationalBestWinner_({
+          campaignFolderName: state.campaignFolderName,
+          sourceMode: 'OPERATIONAL_MID_RUN'
+        });
+      } else {
+        autoApplyResult = {
+          ok: false,
+          skipped: true,
+          reason: 'IMPORT_NOT_OK',
+          message: importResult && importResult.message
+            ? importResult.message
+            : 'Skipped auto-apply because campaign import was not successful.'
+        };
+      }
     } catch (err) {
       importResult = {
         ok: false,
         message: String(err && err.message ? err.message : err)
+      };
+      autoApplyResult = {
+        ok: false,
+        skipped: true,
+        reason: 'IMPORT_EXCEPTION',
+        message: importResult.message
       };
     }
   }

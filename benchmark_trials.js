@@ -288,12 +288,18 @@ function applyBenchmarkReviewNumberFormatting_(sheet) {
     return;
   }
 
-  sheet.getRange("E:E").setNumberFormat("0");
-  sheet.getRange("I:R").setNumberFormat("0");
-  sheet.getRange("F:F").setNumberFormat("0.00");
-  sheet.getRange("G:G").setNumberFormat("0.00");
-  sheet.getRange("H:H").setNumberFormat("0.00");
-  sheet.getRange("S:S").setNumberFormat("0.00");
+  // SEARCH_PROGRESS schema:
+  // A:E operational projection text columns,
+  // F timestamp, G text runId, H:I integer counters,
+  // J score, K:M decimal stats, N:W score/component integers, X runtime decimal.
+  sheet.getRange("F:F").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  sheet.getRange("H:I").setNumberFormat("0");
+  sheet.getRange("J:J").setNumberFormat("0");
+  sheet.getRange("K:K").setNumberFormat("0.00");
+  sheet.getRange("L:L").setNumberFormat("0.00");
+  sheet.getRange("M:M").setNumberFormat("0.00");
+  sheet.getRange("N:W").setNumberFormat("0");
+  sheet.getRange("X:X").setNumberFormat("0.00");
 }
 
 function applyBenchmarkSheetFormatting_(sheet) {
