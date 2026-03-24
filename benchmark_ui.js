@@ -15,7 +15,12 @@ function getBenchmarkUiConfig_() {
       lastUpdated: 'BENCHMARK_UI_LAST_UPDATED',
       specificRunId: 'BENCHMARK_UI_SPECIFIC_RUN_ID',
       defaultWritebackComparisonGroupKey: 'BENCHMARK_UI_DEFAULT_WRITEBACK_COMPARISON_GROUP_KEY',
-      campaignSeed: 'BENCHMARK_UI_CAMPAIGN_SEED'
+      campaignSeed: 'BENCHMARK_UI_CAMPAIGN_SEED',
+      lastAppliedBestScore: 'BENCHMARK_UI_LAST_APPLIED_BEST_SCORE',
+      lastAppliedRunId: 'BENCHMARK_UI_LAST_APPLIED_RUN_ID',
+      lastAppliedCampaignFolder: 'BENCHMARK_UI_LAST_APPLIED_CAMPAIGN_FOLDER',
+      lastAppliedTimestamp: 'BENCHMARK_UI_LAST_APPLIED_TIMESTAMP',
+      lastAppliedSourceMode: 'BENCHMARK_UI_LAST_APPLIED_SOURCE_MODE'
     },
     fallbackCells: {
       targetMaxTrialCount: 'O2',
@@ -29,24 +34,14 @@ function getBenchmarkUiConfig_() {
       lastUpdated: 'O10',
       specificRunId: 'O12',
       defaultWritebackComparisonGroupKey: 'O11',
-      campaignSeed: 'O13'
+      campaignSeed: 'O13',
+      lastAppliedBestScore: 'B35',
+      lastAppliedRunId: 'B36',
+      lastAppliedCampaignFolder: 'B37',
+      lastAppliedTimestamp: 'B38',
+      lastAppliedSourceMode: 'B39'
     },
-    allowedTargetMaxTrialCounts: [
-      1,
-      5,
-      10,
-      50,
-      100,
-      500,
-      1000,
-      5000,
-      10000,
-      50000,
-      100000,
-      500000,
-      1000000,
-      5000000
-    ],
+    fixedChunkSize: 5000,
     defaultStatus: 'IDLE'
   };
 }
@@ -68,7 +63,7 @@ function getBenchmarkUiSheet_() {
 }
 
 function getBenchmarkUiAllowedTargetMaxTrialCounts_() {
-  return getBenchmarkUiConfig_().allowedTargetMaxTrialCounts.slice();
+  return [];
 }
 
 
@@ -85,7 +80,12 @@ function getBenchmarkUiNamedRangeTargetA1Map_() {
     lastUpdated: 'B30',
     completedRuns: 'B31',
     plannedRuns: 'B32',
-    campaignSeed: 'B33'
+    campaignSeed: 'B33',
+    lastAppliedBestScore: 'B35',
+    lastAppliedRunId: 'B36',
+    lastAppliedCampaignFolder: 'B37',
+    lastAppliedTimestamp: 'B38',
+    lastAppliedSourceMode: 'B39'
   };
 }
 
@@ -203,18 +203,8 @@ function parseBenchmarkUiTargetMaxTrialCount_(rawValue) {
 }
 
 function buildBenchmarkTrialCountsUpToTarget_(targetMaxTrialCount) {
-  const target = parseBenchmarkUiTargetMaxTrialCount_(targetMaxTrialCount);
-  const chunkSize = 5000;
-  if (target <= chunkSize) {
-    return [target];
-  }
-
-  const remainder = target % chunkSize;
-  if (remainder > 0) {
-    return [chunkSize, remainder];
-  }
-
-  return [chunkSize];
+  const plan = deriveBenchmarkCampaignChunkPlanFromTarget_(targetMaxTrialCount);
+  return plan.campaignTrialCounts.slice();
 }
 
 function readBenchmarkUiTargetMaxTrialCount_() {
@@ -224,37 +214,16 @@ function readBenchmarkUiTargetMaxTrialCount_() {
 
 function deriveBenchmarkCampaignChunkPlanFromTarget_(targetMaxTrialCount) {
   const target = parseBenchmarkUiTargetMaxTrialCount_(targetMaxTrialCount);
-  const chunkSize = 5000;
-
-  if (target <= chunkSize) {
-    return {
-      chunkSize: chunkSize,
-      campaignTrialCounts: [target],
-      campaignRepeats: 1
-    };
-  }
-
-  const fullChunkRepeats = Math.floor(target / chunkSize);
-  const remainder = target % chunkSize;
-
-  if (remainder === 0) {
-    return {
-      chunkSize: chunkSize,
-      campaignTrialCounts: [chunkSize],
-      campaignRepeats: fullChunkRepeats
-    };
-  }
-
-  const campaignTrialCounts = [];
-  for (let i = 0; i < fullChunkRepeats; i++) {
-    campaignTrialCounts.push(chunkSize);
-  }
-  campaignTrialCounts.push(remainder);
+  const chunkSize = getBenchmarkUiConfig_().fixedChunkSize;
+  const normalizedTarget = Math.ceil(target / chunkSize) * chunkSize;
+  const campaignRepeats = Math.max(1, normalizedTarget / chunkSize);
 
   return {
     chunkSize: chunkSize,
-    campaignTrialCounts: campaignTrialCounts,
-    campaignRepeats: 1
+    requestedTargetMaxTrialCount: target,
+    normalizedTargetMaxTrialCount: normalizedTarget,
+    campaignTrialCounts: [chunkSize],
+    campaignRepeats: campaignRepeats
   };
 }
 
@@ -373,16 +342,15 @@ function ensureBenchmarkUiTextControlPlaceholder_(controlKey, placeholder) {
 
 function initializeBenchmarkUiControls_() {
   const installResult = installBenchmarkUiNamedRanges_();
-  const allowed = getBenchmarkUiAllowedTargetMaxTrialCounts_();
   const targetRange = resolveBenchmarkUiControlRange_('targetMaxTrialCount');
   const validation = SpreadsheetApp.newDataValidation()
-    .requireValueInList(allowed.map(String), true)
+    .requireNumberGreaterThanOrEqualTo(1)
     .setAllowInvalid(false)
     .build();
 
   targetRange.setDataValidation(validation);
   if (!normalizeBenchmarkUiString_(targetRange.getValue())) {
-    targetRange.setValue(String(allowed[0]));
+    targetRange.setValue(String(getBenchmarkUiConfig_().fixedChunkSize));
   }
 
   const statusRange = resolveBenchmarkUiControlRange_('status');
@@ -408,6 +376,19 @@ function initializeBenchmarkUiControls_() {
 
   const campaignSeedRange = resolveBenchmarkUiControlRange_('campaignSeed');
   campaignSeedRange.setNumberFormat('@');
+  const lastAppliedBestScoreRange = resolveBenchmarkUiControlRange_('lastAppliedBestScore');
+  const lastAppliedRunIdRange = resolveBenchmarkUiControlRange_('lastAppliedRunId');
+  const lastAppliedCampaignFolderRange = resolveBenchmarkUiControlRange_('lastAppliedCampaignFolder');
+  const lastAppliedTimestampRange = resolveBenchmarkUiControlRange_('lastAppliedTimestamp');
+  const lastAppliedSourceModeRange = resolveBenchmarkUiControlRange_('lastAppliedSourceMode');
+  lastAppliedBestScoreRange.setNumberFormat('0.############');
+  lastAppliedRunIdRange.setNumberFormat('@');
+  lastAppliedCampaignFolderRange.setNumberFormat('@');
+  lastAppliedTimestampRange.setNumberFormat('yyyy-mm-dd hh:mm:ss');
+  lastAppliedSourceModeRange.setNumberFormat('@');
+
+  bestRunIdRange.setNote('LOWER IS BETTER.');
+  resolveBenchmarkUiControlRange_('bestScore').setNote('LOWER IS BETTER.');
 
   writeBenchmarkUiLastUpdated_(new Date());
 
@@ -420,9 +401,43 @@ function initializeBenchmarkUiControls_() {
     specificRunIdCell: specificRunIdRange.getA1Notation(),
     defaultWritebackComparisonGroupKeyCell: defaultWritebackComparisonGroupKeyRange.getA1Notation(),
     campaignSeedCell: campaignSeedRange.getA1Notation(),
-    allowedTargetMaxTrialCounts: allowed,
+    fixedChunkSize: getBenchmarkUiConfig_().fixedChunkSize,
     installResult: installResult
   };
+}
+
+function readBenchmarkUiAppliedRosterMetadata_() {
+  const rawBestScore = resolveBenchmarkUiControlRange_('lastAppliedBestScore').getValue();
+  const normalizedBestScore = normalizeBenchmarkUiString_(rawBestScore);
+  let lastAppliedBestScore = null;
+  if (normalizedBestScore) {
+    const numericBestScore = Number(normalizedBestScore);
+    lastAppliedBestScore = Number.isFinite(numericBestScore) ? numericBestScore : null;
+  }
+  return {
+    lastAppliedBestScore: lastAppliedBestScore,
+    lastAppliedRunId: normalizeBenchmarkUiString_(resolveBenchmarkUiControlRange_('lastAppliedRunId').getValue()),
+    lastAppliedCampaignFolder: normalizeBenchmarkUiString_(resolveBenchmarkUiControlRange_('lastAppliedCampaignFolder').getValue()),
+    lastAppliedSourceMode: normalizeBenchmarkUiString_(resolveBenchmarkUiControlRange_('lastAppliedSourceMode').getValue()),
+    lastAppliedTimestamp: resolveBenchmarkUiControlRange_('lastAppliedTimestamp').getValue()
+  };
+}
+
+function writeBenchmarkUiAppliedRosterMetadata_(payload) {
+  const metadata = payload || {};
+  writeBenchmarkUiControlValue_(
+    'lastAppliedBestScore',
+    metadata.lastAppliedBestScore === null || metadata.lastAppliedBestScore === undefined ? '' : metadata.lastAppliedBestScore
+  );
+  writeBenchmarkUiControlValue_('lastAppliedRunId', normalizeBenchmarkUiString_(metadata.lastAppliedRunId));
+  writeBenchmarkUiControlValue_('lastAppliedCampaignFolder', normalizeBenchmarkUiString_(metadata.lastAppliedCampaignFolder));
+  writeBenchmarkUiControlValue_('lastAppliedSourceMode', normalizeBenchmarkUiString_(metadata.lastAppliedSourceMode));
+  const timestampRange = resolveBenchmarkUiControlRange_('lastAppliedTimestamp');
+  const timestamp = metadata.lastAppliedTimestamp instanceof Date
+    ? metadata.lastAppliedTimestamp
+    : new Date();
+  timestampRange.setValue(timestamp);
+  timestampRange.setNumberFormat('yyyy-mm-dd hh:mm:ss');
 }
 
 function debugBenchmarkUiControlMap_() {

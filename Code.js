@@ -72,15 +72,15 @@ function exportPhase12BenchmarkSnapshotToDrive() {
 
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu('Benchmark')
-    .addItem('Initialize control panel', 'initializeBenchmarkControlPanel')
+    .createMenu('Operational Search')
+    .addItem('Initialize control panel (LOWER IS BETTER)', 'initializeBenchmarkControlPanel')
     .addItem('Inspect control panel state', 'inspectBenchmarkControlPanelState')
     .addSeparator()
-    .addItem('Import latest uploaded campaign to tables', 'importLatestBenchmarkCampaignToTables')
-    .addItem('Import selected campaign to tables', 'importSelectedBenchmarkCampaignToTables')
+    .addItem('Import latest uploaded campaign to SEARCH_LOG', 'importLatestBenchmarkCampaignToTables')
+    .addItem('Import selected campaign to SEARCH_LOG', 'importSelectedBenchmarkCampaignToTables')
     .addSeparator()
-    .addItem('Inspect current best winner', 'inspectCurrentBestBenchmarkWinner')
-    .addItem('Apply current best roster to Sheet1', 'applyCurrentBestBenchmarkRoster')
+    .addItem('Inspect current best winner (LOWER IS BETTER)', 'inspectCurrentBestBenchmarkWinner')
+    .addItem('Apply current best roster to Sheet1 (manual)', 'applyCurrentBestBenchmarkRoster')
     .addItem('Inspect specific RunId from UI', 'inspectSpecificBenchmarkRunIdFromUi')
     .addItem('Apply specific RunId from UI', 'applySpecificBenchmarkRunIdFromUi')
     .addToUi();

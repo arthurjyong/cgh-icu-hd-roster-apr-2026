@@ -666,7 +666,9 @@ async function maybeUploadCampaignToDrive(config, modules, campaignArtifactWrite
   const driveUploadResult = await modules.driveUpload.uploadFinalArtifactsToDrive({
     driveAuthGateway,
     config,
-    artifactSet
+    artifactSet,
+    allowExistingRunFolder: true,
+    replaceExistingFiles: true
   });
 
   const driveUploadSummary = {
@@ -693,6 +695,34 @@ async function maybeUploadCampaignToDrive(config, modules, campaignArtifactWrite
   return {
     ...driveUploadSummary,
     summaryPath
+  };
+}
+
+async function uploadCampaignProgressToDrive(config, modules, campaignArtifactWriteResult, latestRunArtifactSet) {
+  if (!config.uploadToDrive || !latestRunArtifactSet) {
+    return null;
+  }
+
+  const artifactSet = modules.artifacts.buildCampaignDriveUploadArtifactSet({
+    campaignArtifactWriteResult,
+    runArtifactSets: [latestRunArtifactSet]
+  });
+  const driveAuthGateway = await modules.driveAuth.createDriveAuthGateway({ config });
+  const driveUploadResult = await modules.driveUpload.uploadFinalArtifactsToDrive({
+    driveAuthGateway,
+    config,
+    artifactSet,
+    allowExistingRunFolder: true,
+    replaceExistingFiles: true
+  });
+
+  return {
+    launcherPhase: '13B',
+    uploadedAtIso: new Date().toISOString(),
+    authMode: driveUploadResult.authMode || 'OAUTH_DESKTOP',
+    principalEmail: driveUploadResult.principalEmail || null,
+    campaignFolder: driveUploadResult.runFolder || null,
+    uploadedFilesCount: Array.isArray(driveUploadResult.uploadedFiles) ? driveUploadResult.uploadedFiles.length : 0
   };
 }
 
@@ -810,17 +840,33 @@ async function executeCampaignPlan(config, snapshotInfo, campaignPlan, planFinge
     );
 
     campaignConsolidator.recordRunResult(runRecord);
-
-    if (config.uploadToDrive && runSummary && runSummary.ok && runSummary.artifacts) {
-      runArtifactSets.push(
-        modules.artifacts.buildDriveUploadArtifactSet(runSummary.artifacts)
-      );
-    }
-
     campaignWriter.writeCampaignReport(campaignConsolidator.getState(), {
       launcherPhase: '13B',
       planFingerprint
     });
+
+    let latestRunArtifactSet = null;
+    if (runSummary && runSummary.ok && runSummary.artifacts) {
+      latestRunArtifactSet = modules.artifacts.buildDriveUploadArtifactSet(runSummary.artifacts);
+      if (config.uploadToDrive) {
+        runArtifactSets.push(latestRunArtifactSet);
+      }
+    }
+
+    if (config.uploadToDrive) {
+      try {
+        const campaignArtifactWriteResult = campaignWriter.buildCampaignArtifactWriteResult();
+        await uploadCampaignProgressToDrive(
+          config,
+          modules,
+          campaignArtifactWriteResult,
+          latestRunArtifactSet
+        );
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        process.stderr.write(`[WARN] Campaign progress Drive sync failed for run ${runSpec.runId}: ${message}\n`);
+      }
+    }
   }
 
   const campaignState = campaignConsolidator.getState();

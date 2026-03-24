@@ -230,6 +230,59 @@ async function uploadFile(drive, options) {
   return response.data;
 }
 
+async function updateFileContent(drive, options) {
+  const source = options || {};
+  const localPath = path.resolve(source.localPath);
+  const fileId = source.fileId;
+  const fileName = source.fileName || path.basename(localPath);
+  const mimeType = source.mimeType || 'application/json';
+
+  if (!fileId) {
+    throw new Error('updateFileContent requires fileId.');
+  }
+
+  if (!fs.existsSync(localPath)) {
+    throw new Error(`Upload source file not found: ${localPath}`);
+  }
+
+  const response = await drive.files.update({
+    fileId,
+    requestBody: {
+      name: fileName
+    },
+    media: {
+      mimeType,
+      body: fs.createReadStream(localPath)
+    },
+    fields: 'id,name,mimeType,parents,size',
+    supportsAllDrives: true
+  });
+
+  return response.data;
+}
+
+async function findChildFileByName(drive, parentFolderId, fileName) {
+  const query = [
+    `'${escapeDriveQueryString(parentFolderId)}' in parents`,
+    `name='${escapeDriveQueryString(fileName)}'`,
+    'trashed=false'
+  ].join(' and ');
+
+  const response = await drive.files.list({
+    q: query,
+    fields: 'files(id,name,mimeType,parents)',
+    pageSize: 10,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  });
+
+  const files = Array.isArray(response.data && response.data.files) ? response.data.files : [];
+  if (files.length > 1) {
+    throw new Error(`Multiple files named ${fileName} were found in folder ${parentFolderId}.`);
+  }
+  return files.length === 1 ? files[0] : null;
+}
+
 async function uploadFinalArtifactsToDrive(options) {
   const source = options || {};
   const driveAuthGateway = source.driveAuthGateway;
@@ -250,14 +303,35 @@ async function uploadFinalArtifactsToDrive(options) {
   }
 
   const folderResolution = await resolveBenchmarkRunsFolder(drive, config);
-  const runFolder = await createRunFolderOrThrow(
+  const allowExistingRunFolder = source.allowExistingRunFolder === true;
+  const existingRunFolders = await listChildFoldersByName(
     drive,
     folderResolution.benchmarkRunsFolder.id,
     artifactSet.runFolderName
   );
+  if (existingRunFolders.length > 1) {
+    throw new Error(`Multiple run folders named ${artifactSet.runFolderName} were found under benchmark_runs.`);
+  }
+  let runFolder = null;
+  if (existingRunFolders.length === 1) {
+    if (!allowExistingRunFolder) {
+      throw new Error(
+        `Drive run folder already exists under benchmark_runs: ${artifactSet.runFolderName}. ` +
+        'Refusing to overwrite existing uploaded artifacts.'
+      );
+    }
+    runFolder = existingRunFolders[0];
+  } else {
+    runFolder = await createRunFolderOrThrow(
+      drive,
+      folderResolution.benchmarkRunsFolder.id,
+      artifactSet.runFolderName
+    );
+  }
 
   const folderCache = new Map();
   const uploadedFiles = [];
+  const replaceExistingFiles = source.replaceExistingFiles === true;
 
   for (const fileDescriptor of artifactSet.files) {
     const relativePath = String(fileDescriptor.relativePath || '').replace(/\\/g, '/');
@@ -278,12 +352,30 @@ async function uploadFinalArtifactsToDrive(options) {
       folderCache
     );
 
-    const driveFile = await uploadFile(drive, {
-      localPath: fileDescriptor.localPath,
-      parentFolderId: parentFolder.id,
-      fileName: pathParts[pathParts.length - 1],
-      mimeType: fileDescriptor.mimeType || 'application/json'
-    });
+    const targetFileName = pathParts[pathParts.length - 1];
+    let driveFile = null;
+    const existingFile = replaceExistingFiles
+      ? await findChildFileByName(drive, parentFolder.id, targetFileName)
+      : null;
+    if (replaceExistingFiles) {
+      if (existingFile) {
+        driveFile = await updateFileContent(drive, {
+          fileId: existingFile.id,
+          localPath: fileDescriptor.localPath,
+          fileName: targetFileName,
+          mimeType: fileDescriptor.mimeType || 'application/json'
+        });
+      }
+    }
+
+    if (!driveFile) {
+      driveFile = await uploadFile(drive, {
+        localPath: fileDescriptor.localPath,
+        parentFolderId: parentFolder.id,
+        fileName: targetFileName,
+        mimeType: fileDescriptor.mimeType || 'application/json'
+      });
+    }
 
     uploadedFiles.push({
       relativePath,
@@ -330,5 +422,7 @@ module.exports = {
   resolveNestedFolderPath,
   resolveOrCreateChildFolderByName,
   uploadFile,
+  updateFileContent,
+  findChildFileByName,
   uploadFinalArtifactsToDrive
 };
