@@ -344,11 +344,10 @@ function buildCompactBenchmarkCampaignStateSummary_(state) {
 
 function ensureBenchmarkTabsCompleteOrReset_() {
   const spreadsheet = SpreadsheetApp.getActive();
-  const requiredSheetNames = [
-    getBenchmarkTrialsSheetName_(),
-    getBenchmarkSummarySheetName_(),
-    getBenchmarkReviewSheetName_()
-  ];
+  const trialsSheetName = getBenchmarkTrialsSheetName_();
+  const summarySheetName = getBenchmarkSummarySheetName_();
+  const reviewSheetName = getBenchmarkReviewSheetName_();
+  const requiredSheetNames = [trialsSheetName, summarySheetName, reviewSheetName];
   const missingSheetNames = [];
   for (let i = 0; i < requiredSheetNames.length; i++) {
     const requiredName = requiredSheetNames[i];
@@ -356,7 +355,12 @@ function ensureBenchmarkTabsCompleteOrReset_() {
       missingSheetNames.push(requiredName);
     }
   }
-  if (missingSheetNames.length > 0) {
+
+  const missingTrialsSheet = missingSheetNames.indexOf(trialsSheetName) !== -1;
+  const missingSummarySheet = missingSheetNames.indexOf(summarySheetName) !== -1;
+  const missingReviewSheet = missingSheetNames.indexOf(reviewSheetName) !== -1;
+
+  if (missingTrialsSheet) {
     resetBenchmarkSheets();
     return {
       ok: true,
@@ -364,10 +368,18 @@ function ensureBenchmarkTabsCompleteOrReset_() {
       missingSheetNames: missingSheetNames
     };
   }
+
+  if (missingSummarySheet) {
+    refreshBenchmarkSummarySheet();
+  }
+  if (missingReviewSheet) {
+    refreshBenchmarkReviewSheet();
+  }
+
   return {
     ok: true,
     resetTriggered: false,
-    missingSheetNames: []
+    missingSheetNames: missingSheetNames
   };
 }
 

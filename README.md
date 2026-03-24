@@ -130,7 +130,7 @@ Recommended for very high trial counts:
 
 1. Open the benchmark controls in the bound Google Sheet and set a valid target max trial count.
 2. Click **Generate Rosters** to start the external campaign flow from the UI.
-3. If `BENCHMARK_TRIALS` / `BENCHMARK_SUMMARY` / `BENCHMARK_REVIEW` are missing, the UI start flow auto-runs `resetBenchmarkSheets()` before launch.
+3. If `BENCHMARK_TRIALS` is missing, the UI start flow auto-runs `resetBenchmarkSheets()` before launch; if only `BENCHMARK_SUMMARY` and/or `BENCHMARK_REVIEW` are missing, the UI start flow rebuilds just those derived tabs.
 4. Confirm campaign status transitions to running and that campaign metadata is populated in the UI status cells.
 
 ## Optimization review (clear opportunities)
