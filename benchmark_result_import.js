@@ -1798,12 +1798,16 @@ function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
 
     if (scopedGroup.length === 0) {
       if (isUiDefaultScope) {
-        if (groups.length === 1 && groups[0] && groups[0].comparisonStatus === "STRICT") {
-          selectedGroup = groups[0];
+        const strictGroups = groups.filter(function(group) {
+          return group && group.comparisonStatus === "STRICT";
+        });
+        if (strictGroups.length === 1) {
+          selectedGroup = strictGroups[0];
           selectionMode = "AUTO_RECOVERED_FROM_STALE_UI_DEFAULT";
         } else {
           throw new Error(
             'Saved default comparison group "' + requestedComparisonGroupKey + '" is stale and no single strict fallback group could be chosen automatically. ' +
+            'Found ' + strictGroups.length + ' strict group(s). ' +
             recoveryMessage +
             ' Groups in scope: ' +
             groups.slice(0, 3).map(formatBenchmarkTrialsWritebackComparisonGroupForError_).join(" | ") +
