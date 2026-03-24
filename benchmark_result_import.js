@@ -1034,10 +1034,24 @@ function validateBenchmarkCampaignReport_(report) {
     };
   }
 
+  const seenRunIds = {};
+
   for (let i = 0; i < report.runs.length; i++) {
-    const validation = validateBenchmarkCampaignRun_(report.runs[i], i);
+    const currentRun = report.runs[i];
+    const validation = validateBenchmarkCampaignRun_(currentRun, i);
     if (validation.ok !== true) {
       return validation;
+    }
+
+    const runIdKey = normalizeBenchmarkTrialsRunIdForCompare_(currentRun.runId);
+    if (runIdKey) {
+      if (seenRunIds[runIdKey]) {
+        return {
+          ok: false,
+          message: 'Campaign report contains duplicate runId values: "' + currentRun.runId + '".'
+        };
+      }
+      seenRunIds[runIdKey] = true;
     }
   }
 
@@ -1176,13 +1190,94 @@ function replaceBenchmarkTrialsRows_(rows) {
 }
 
 function appendBenchmarkTrialsRows_(rows) {
-  appendBenchmarkRows_(rows);
+  const appendRows = Array.isArray(rows) ? rows : [];
+  const dedupeResult = filterBenchmarkTrialsRowsForAppendDeduping_(appendRows);
+  appendBenchmarkRows_(dedupeResult.rowsToAppend);
 
   return {
     ok: true,
     sheetName: getBenchmarkTrialsSheetName_(),
     writeMode: "APPEND",
-    rowCount: rows ? rows.length : 0
+    rowCount: dedupeResult.rowsToAppend.length,
+    skippedDuplicateRowCount: dedupeResult.skippedDuplicateRowCount
+  };
+}
+
+function buildBenchmarkTrialsFallbackDedupeKey_(rowObject) {
+  const row = rowObject || {};
+  return [
+    trimmedStringOrBlank_(row.CampaignFolderName),
+    trimmedStringOrBlank_(row.RunFolderName),
+    trimmedStringOrBlank_(row.ArtifactFileName),
+    trimmedStringOrBlank_(row.TrialCount),
+    trimmedStringOrBlank_(row.RepeatIndex)
+  ].join("|").toLowerCase();
+}
+
+function buildBenchmarkTrialsRunIdOrFallbackDedupeKey_(rowObject) {
+  const row = rowObject || {};
+  const runIdKey = normalizeBenchmarkTrialsRunIdForCompare_(row.RunId);
+  if (runIdKey) {
+    return "runid:" + runIdKey;
+  }
+
+  return "fallback:" + buildBenchmarkTrialsFallbackDedupeKey_(row);
+}
+
+function buildBenchmarkTrialsRowObjectFromArray_(rowValues) {
+  const values = Array.isArray(rowValues) ? rowValues : [];
+  const header = getBenchmarkTrialsHeader_();
+  const rowObject = {};
+
+  for (let i = 0; i < header.length; i++) {
+    rowObject[header[i]] = i < values.length ? values[i] : "";
+  }
+
+  return rowObject;
+}
+
+function filterBenchmarkTrialsRowsForAppendDeduping_(rows) {
+  const appendRows = Array.isArray(rows) ? rows : [];
+  if (appendRows.length === 0) {
+    return {
+      rowsToAppend: [],
+      skippedDuplicateRowCount: 0
+    };
+  }
+
+  const existing = readBenchmarkTrialsRowsAsObjects_();
+  const existingRows = existing && Array.isArray(existing.rows) ? existing.rows : [];
+  const seenKeys = {};
+
+  for (let i = 0; i < existingRows.length; i++) {
+    const key = buildBenchmarkTrialsRunIdOrFallbackDedupeKey_(existingRows[i]);
+    if (key) {
+      seenKeys[key] = true;
+    }
+  }
+
+  const rowsToAppend = [];
+  let skippedDuplicateRowCount = 0;
+
+  for (let j = 0; j < appendRows.length; j++) {
+    const rowArray = appendRows[j];
+    const rowObject = buildBenchmarkTrialsRowObjectFromArray_(rowArray);
+    const key = buildBenchmarkTrialsRunIdOrFallbackDedupeKey_(rowObject);
+
+    if (key && seenKeys[key]) {
+      skippedDuplicateRowCount += 1;
+      continue;
+    }
+
+    if (key) {
+      seenKeys[key] = true;
+    }
+    rowsToAppend.push(rowArray);
+  }
+
+  return {
+    rowsToAppend: rowsToAppend,
+    skippedDuplicateRowCount: skippedDuplicateRowCount
   };
 }
 
@@ -1588,14 +1683,13 @@ function resolveSingleCampaignFolderInTrialsSheet_(candidates) {
 
   if (ordered.length === 0) {
     throw new Error(
-      "BENCHMARK_TRIALS has no valid writeback candidates. Run a REPLACE campaign import first."
+      "BENCHMARK_TRIALS has no valid writeback candidates. Import at least one campaign report first."
     );
   }
 
   if (ordered.length > 1) {
     throw new Error(
-      "BENCHMARK_TRIALS contains multiple CampaignFolderName values among valid writeback candidates. " +
-      "Use REPLACE import for exactly one campaign before running writeback."
+      "BENCHMARK_TRIALS contains multiple CampaignFolderName values among valid writeback candidates."
     );
   }
 
@@ -1687,7 +1781,7 @@ function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
 
   if (rows.length === 0) {
     throw new Error(
-      "BENCHMARK_TRIALS has no valid writeback candidates. Run a REPLACE campaign import first."
+      "BENCHMARK_TRIALS has no valid writeback candidates. Import at least one campaign report first."
     );
   }
 
@@ -1773,7 +1867,7 @@ function compareBenchmarkTrialsWritebackCandidates_(left, right) {
 function pickBestBenchmarkTrialsWritebackCandidate_(candidates) {
   if (!Array.isArray(candidates) || candidates.length === 0) {
     throw new Error(
-      "BENCHMARK_TRIALS has no valid writeback candidates. Run a REPLACE campaign import first."
+      "BENCHMARK_TRIALS has no valid writeback candidates. Import at least one campaign report first."
     );
   }
 
@@ -2143,11 +2237,9 @@ function selectBestBenchmarkTrialsWinnerForWriteback_(scopeOptions) {
   const validatedCandidates = buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates);
   const resolvedScopeOptions = resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions);
   const scope = resolveBenchmarkTrialsWritebackScope_(validatedCandidates, resolvedScopeOptions);
-  const campaignFolderName = resolveSingleCampaignFolderInTrialsSheet_(scope.scopedCandidates);
-  const campaignCandidates = scope.scopedCandidates.filter(function(candidate) {
-    return candidate.CampaignFolderName === campaignFolderName;
-  });
-  const bestCandidate = pickBestBenchmarkTrialsWritebackCandidate_(campaignCandidates);
+  // Automatic green-button writeback intentionally evaluates the entire scoped candidate set
+  // (which may span multiple campaigns) after comparison-group scoping has been resolved.
+  const bestCandidate = pickBestBenchmarkTrialsWritebackCandidate_(scope.scopedCandidates);
   const loadedArtifact = bestCandidate._loadedArtifactForWriteback || loadAndValidateBenchmarkRunArtifactForWriteback_(bestCandidate);
 
   return {
@@ -2160,7 +2252,8 @@ function selectBestBenchmarkTrialsWinnerForWriteback_(scopeOptions) {
     requestedComparisonGroupKey: resolvedScopeOptions.comparisonGroupKey || '',
     scopeSelectionMode: scope.selectionMode || resolvedScopeOptions.scopeSelectionMode || 'AUTO_SINGLE_GROUP_ONLY',
     scopeSelectionSource: resolvedScopeOptions.scopeSelectionSource || 'AUTO_SINGLE_GROUP_ONLY',
-    campaignFolderName: campaignFolderName,
+    campaignFolderName: trimmedStringOrBlank_(bestCandidate.CampaignFolderName),
+    selectionScopeDescription: 'BEST_OF_ALL_SCOPED_VALID_ROWS',
     candidateRow: bestCandidate,
     loadedArtifact: loadedArtifact,
     transportResult: loadedArtifact.transportResult
@@ -2184,6 +2277,7 @@ function buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, includeTr
     requestedComparisonGroupKey: selection.requestedComparisonGroupKey || null,
     scopeSelectionMode: selection.scopeSelectionMode || null,
     scopeSelectionSource: selection.scopeSelectionSource || null,
+    selectionScopeDescription: selection.selectionScopeDescription || null,
     comparisonGroupKey: selection.comparisonGroup ? selection.comparisonGroup.comparisonGroupKey || null : null,
     comparisonStatus: selection.comparisonGroup ? selection.comparisonGroup.comparisonStatus || null : null,
     comparisonStatusReason: selection.comparisonGroup ? selection.comparisonGroup.comparisonStatusReason || null : null,

@@ -16,7 +16,7 @@ const {
   validateCampaignState
 } = require('./campaign_state');
 
-const DEFAULT_LADDER = Object.freeze([
+const DEFAULT_TRIAL_COUNTS = Object.freeze([
   1,
   5,
   10,
@@ -84,7 +84,7 @@ function normalizeTrialCounts(input) {
       return numeric;
     });
   }
-  return DEFAULT_LADDER.slice();
+  return DEFAULT_TRIAL_COUNTS.slice();
 }
 
 function buildCampaignFolderName(options) {
@@ -119,7 +119,7 @@ function normalizeConfig(input) {
     throw new Error('campaignRepeats must be a positive integer.');
   }
 
-  const chunkTrials = Number(source.chunkTrials || 1000);
+  const chunkTrials = Number(source.chunkTrials || 5000);
   if (!Number.isInteger(chunkTrials) || chunkTrials <= 0) {
     throw new Error('chunkTrials must be a positive integer.');
   }

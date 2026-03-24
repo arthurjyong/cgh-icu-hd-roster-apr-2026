@@ -112,7 +112,7 @@ function getServerConfig() {
       'DRIVE_BENCHMARK_RUNS_FOLDER_NAME'
     ),
     outputRootDir,
-    chunkTrials: getOptionalPositiveIntegerEnv(1000, 'BENCHMARK_ORCHESTRATOR_CHUNK_TRIALS', 'ORCHESTRATOR_CHUNK_TRIALS'),
+    chunkTrials: getOptionalPositiveIntegerEnv(5000, 'BENCHMARK_ORCHESTRATOR_CHUNK_TRIALS', 'ORCHESTRATOR_CHUNK_TRIALS'),
     topN: getOptionalPositiveIntegerEnv(10, 'BENCHMARK_ORCHESTRATOR_TOP_N', 'ORCHESTRATOR_TOP_N'),
     requestTimeoutMs: getOptionalPositiveIntegerEnv(600000, 'BENCHMARK_ORCHESTRATOR_REQUEST_TIMEOUT_MS', 'ORCHESTRATOR_REQUEST_TIMEOUT_MS'),
     statusPollIntervalMs: getOptionalPositiveIntegerEnv(2000, 'BENCHMARK_ORCHESTRATOR_STATUS_POLL_INTERVAL_MS', 'ORCHESTRATOR_STATUS_POLL_INTERVAL_MS')

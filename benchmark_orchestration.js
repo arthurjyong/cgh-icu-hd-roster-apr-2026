@@ -198,18 +198,9 @@ function buildBenchmarkCampaignStartPayload_(snapshotExportResult, uiState) {
   const ui = uiState || readBenchmarkUiControlState_();
   const exportInfo = snapshotExportResult.export || {};
   const baseSeed = resolveBenchmarkCampaignSeedFromUi_(ui);
-  const chunkSize = 1000;
-  let campaignTrialCounts = ui.expandedTrialCounts;
-  let campaignRepeats = getBenchmarkOrchestrationDefaults_().repeats;
-
-  if (
-    ui.targetMaxTrialCount > chunkSize
-    && ui.targetMaxTrialCount % chunkSize === 0
-    && campaignTrialCounts.length === 1
-    && campaignTrialCounts[0] === chunkSize
-  ) {
-    campaignRepeats = ui.targetMaxTrialCount / chunkSize;
-  }
+  const chunkPlan = deriveBenchmarkCampaignChunkPlanFromTarget_(ui.targetMaxTrialCount);
+  const campaignTrialCounts = chunkPlan.campaignTrialCounts;
+  const campaignRepeats = chunkPlan.campaignRepeats;
 
   return {
     mode: 'CAMPAIGN',
@@ -315,7 +306,7 @@ function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
   }
   setPhase13CampaignImportSelectedCampaignFolder(folderName);
   setPhase13CampaignImportSelectedArtifactFileName(getBenchmarkOrchestrationDefaults_().artifactFileName);
-  runReplaceBenchmarkTrialsWithSelectedCampaignReport();
+  runAppendSelectedBenchmarkCampaignReportToTrialsSheet();
 
   let bestWinner = null;
   try {
@@ -584,6 +575,10 @@ function clearActiveBenchmarkCampaignUiAndState_() {
 }
 
 function runBenchmarkLadderFromUi() {
+  return startBenchmarkCampaignFromUi_();
+}
+
+function runBenchmarkCampaignFromUi() {
   return startBenchmarkCampaignFromUi_();
 }
 

@@ -195,11 +195,8 @@ function parseBenchmarkUiTargetMaxTrialCount_(rawValue) {
     throw new Error('Target max trial count must be an integer.');
   }
 
-  if (!isAllowedBenchmarkUiTargetMaxTrialCount_(numeric)) {
-    throw new Error(
-      'Target max trial count must be one of: ' +
-      getBenchmarkUiAllowedTargetMaxTrialCounts_().join(', ')
-    );
+  if (numeric <= 0) {
+    throw new Error('Target max trial count must be a positive integer.');
   }
 
   return numeric;
@@ -207,7 +204,7 @@ function parseBenchmarkUiTargetMaxTrialCount_(rawValue) {
 
 function buildBenchmarkTrialCountsUpToTarget_(targetMaxTrialCount) {
   const target = parseBenchmarkUiTargetMaxTrialCount_(targetMaxTrialCount);
-  const chunkSize = 1000;
+  const chunkSize = 5000;
   if (target <= chunkSize) {
     return [target];
   }
@@ -223,6 +220,42 @@ function buildBenchmarkTrialCountsUpToTarget_(targetMaxTrialCount) {
 function readBenchmarkUiTargetMaxTrialCount_() {
   const control = resolveBenchmarkUiControlRange_('targetMaxTrialCount');
   return parseBenchmarkUiTargetMaxTrialCount_(control.getValue());
+}
+
+function deriveBenchmarkCampaignChunkPlanFromTarget_(targetMaxTrialCount) {
+  const target = parseBenchmarkUiTargetMaxTrialCount_(targetMaxTrialCount);
+  const chunkSize = 5000;
+
+  if (target <= chunkSize) {
+    return {
+      chunkSize: chunkSize,
+      campaignTrialCounts: [target],
+      campaignRepeats: 1
+    };
+  }
+
+  const fullChunkRepeats = Math.floor(target / chunkSize);
+  const remainder = target % chunkSize;
+
+  if (remainder === 0) {
+    return {
+      chunkSize: chunkSize,
+      campaignTrialCounts: [chunkSize],
+      campaignRepeats: fullChunkRepeats
+    };
+  }
+
+  const campaignTrialCounts = [];
+  for (let i = 0; i < fullChunkRepeats; i++) {
+    campaignTrialCounts.push(chunkSize);
+  }
+  campaignTrialCounts.push(remainder);
+
+  return {
+    chunkSize: chunkSize,
+    campaignTrialCounts: campaignTrialCounts,
+    campaignRepeats: 1
+  };
 }
 
 function readBenchmarkUiSpecificRunId_() {
