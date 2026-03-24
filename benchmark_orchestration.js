@@ -408,9 +408,6 @@ function buildBenchmarkStatusProjectionState_(payload) {
   }
 
   if (backendStatus === activeStatuses.pending || backendStatus === activeStatuses.running) {
-    if (importAttempted && !importOk) {
-      return 'IMPORT_FAILED';
-    }
     return 'RUNNING';
   }
 
