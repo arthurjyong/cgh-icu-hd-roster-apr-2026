@@ -223,10 +223,10 @@ function getScorerConfigDefinitions_() {
     {
       key: "CR_CALL_REWARD",
       defaultValue: defaults.CR_CALL_REWARD,
-      description: "Reward for assigning a doctor to a day they requested call (CR).",
-      effect: "Higher value increases preference for satisfying CR requests.",
+      description: "Base reward for fulfilled CR; repeated CR fulfillment by the same doctor decays geometrically.",
+      effect: "Higher value increases preference for satisfying CR requests (first fulfilled CR per doctor has full weight, then half, quarter, etc.).",
       suggestedRange: "0 to 1000",
-      notes: "May be 0 to ignore CR reward.",
+      notes: "May be 0 to ignore CR reward. Current decay factor is fixed at 0.5 in scorer logic.",
       required: true,
       mustBeNumber: true,
       minInclusive: 0
