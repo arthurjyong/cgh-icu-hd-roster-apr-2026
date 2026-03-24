@@ -15,7 +15,7 @@ function getScoringContractVersion_() {
 }
 
 function getScorerLogicVersion_() {
-  return "phase3_scorer_identity_v1";
+  return "phase3_scorer_identity_v2_cr_reward_decay";
 }
 
 function getScorerComponentKeys_() {
