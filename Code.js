@@ -134,6 +134,12 @@ function applyCurrentBestBenchmarkRoster() {
   return result;
 }
 
+function recomputeMonthlyCallPointsFromFinalRoster() {
+  const result = recomputeMonthlyCallPointsFromFinalRoster_();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 function inspectSpecificBenchmarkRunIdFromUi() {
   const state = readBenchmarkUiControlState_();
   const runId = normalizeBenchmarkUiString_(state.specificRunId);

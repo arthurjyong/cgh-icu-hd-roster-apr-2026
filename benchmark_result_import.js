@@ -3288,22 +3288,68 @@ function debugInspectBestBenchmarkTrialsWinnerForWritebackStrictAudit() {
   return payload;
 }
 
-function runWriteBestBenchmarkTrialsWinnerToSheet() {
-  const selection = selectBestBenchmarkTrialsWinnerForWriteback_();
-  writeTransportTrialResultToSheet_(selection.transportResult);
+function applyBestBenchmarkWinnerToSheet_(options) {
+  const context = options || {};
+  const selectionOptions = context.selectionOptions && typeof context.selectionOptions === 'object'
+    ? context.selectionOptions
+    : {};
+  const sourceMode = trimmedStringOrBlank_(context.sourceMode) || 'BENCHMARK_WRITEBACK';
+  const fallbackCampaignFolderName = trimmedStringOrBlank_(context.campaignFolderName);
+
+  let selection;
+  try {
+    selection = selectBestBenchmarkTrialsWinnerForWriteback_(selectionOptions);
+  } catch (err) {
+    return {
+      ok: false,
+      applied: false,
+      skipped: true,
+      reason: 'NO_VALID_BEST_WINNER',
+      message: String(err && err.message ? err.message : err)
+    };
+  }
+
+  let recomputeResult = null;
+  try {
+    writeTransportTrialResultToSheet_(selection.transportResult);
+    if (typeof recomputeMonthlyCallPointsFromFinalRoster_ === 'function') {
+      recomputeResult = recomputeMonthlyCallPointsFromFinalRoster_();
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      applied: true,
+      reason: 'WRITE_OR_RECOMPUTE_FAILED',
+      message: String(err && err.message ? err.message : err)
+    };
+  }
+
   const uiMetadataUpdate = updateBenchmarkUiAppliedMetadataFromSelection_(
     selection,
-    'BENCHMARK_WRITEBACK_CURRENT_BEST'
+    sourceMode
   );
-
   const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false);
+  const candidate = selection && selection.candidateRow ? selection.candidateRow : {};
   payload.message = 'Best benchmark trials winner written to Sheet1 rows 35-38.';
   payload.uiMetadataUpdate = uiMetadataUpdate;
+  payload.monthlyCallPointsUpdate = recomputeResult;
   payload.appliedMetadataAfterWriteback = readBenchmarkUiAppliedRosterMetadataForWritebackLog_();
   if (uiMetadataUpdate && uiMetadataUpdate.ok !== true) {
     payload.warning = 'Roster writeback succeeded, but metadata update had warnings/failure details.';
   }
 
+  payload.applied = true;
+  payload.lastAppliedBestScore = isFiniteNumberValue_(candidate.BestScore) ? Number(candidate.BestScore) : null;
+  payload.runId = trimmedStringOrBlank_(candidate.RunId);
+  payload.campaignFolderName = trimmedStringOrBlank_(candidate.CampaignFolderName) || fallbackCampaignFolderName;
+  payload.ok = true;
+
   Logger.log(JSON.stringify(payload, null, 2));
   return payload;
+}
+
+function runWriteBestBenchmarkTrialsWinnerToSheet() {
+  return applyBestBenchmarkWinnerToSheet_({
+    sourceMode: 'BENCHMARK_WRITEBACK_CURRENT_BEST'
+  });
 }

@@ -149,6 +149,136 @@ function writeTransportTrialResultToSheet_(transportResult) {
   writeAllocationToSheet_(transportResult.bestAllocation);
 }
 
+function normalizeMonthlyCallPointDoctorName_(value) {
+  if (typeof trimmedStringOrBlank_ === "function") {
+    return trimmedStringOrBlank_(value);
+  }
+  return value === null || value === undefined ? "" : String(value).trim();
+}
+
+function toFiniteCallPointNumberOrZero_(value, contextLabel) {
+  if (value === "" || value === null || value === undefined) {
+    return 0;
+  }
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric;
+  }
+  Logger.log(
+    'Non-numeric call point value encountered at %s. Treating as 0. Raw value=%s',
+    contextLabel,
+    JSON.stringify(value)
+  );
+  return 0;
+}
+
+function getMonthlyCallPointDoctorRowBlocks_() {
+  return [
+    { startRow: 4, endRow: 11 },
+    { startRow: 14, endRow: 20 },
+    { startRow: 23, endRow: 30 }
+  ];
+}
+
+function recomputeMonthlyCallPointsFromFinalRoster_() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName("Sheet1");
+  if (!sheet) {
+    throw new Error('Sheet "Sheet1" not found.');
+  }
+
+  const doctorRowBlocks = getMonthlyCallPointDoctorRowBlocks_();
+  const dateStartColumn = 2; // B
+  const dateColumnCount = 28; // B:AC
+  const outputColumn = 31; // AE
+  const micuPointsRow = 32;
+  const mhdPointsRow = 33;
+  const micuCallRow = 35;
+  const mhdCallRow = 37;
+
+  const doctorNameToRow = {};
+  const doctorTotals = {};
+  const doctorNamesByRow = {};
+
+  for (let i = 0; i < doctorRowBlocks.length; i++) {
+    const block = doctorRowBlocks[i];
+    const rowCount = block.endRow - block.startRow + 1;
+    const names = sheet.getRange(block.startRow, 1, rowCount, 1).getValues();
+    for (let r = 0; r < rowCount; r++) {
+      const rowNumber = block.startRow + r;
+      const doctorName = normalizeMonthlyCallPointDoctorName_(names[r][0]);
+      if (!doctorName) {
+        doctorNamesByRow[rowNumber] = "";
+        continue;
+      }
+      if (Object.prototype.hasOwnProperty.call(doctorNameToRow, doctorName)) {
+        throw new Error(
+          'Duplicate doctor name "' + doctorName + '" in master list rows ' +
+          doctorNameToRow[doctorName] + " and " + rowNumber + "."
+        );
+      }
+      doctorNameToRow[doctorName] = rowNumber;
+      doctorNamesByRow[rowNumber] = doctorName;
+      doctorTotals[doctorName] = 0;
+    }
+  }
+
+  const pointsRows = sheet.getRange(micuPointsRow, dateStartColumn, 2, dateColumnCount).getValues();
+  const callRows = sheet.getRange(micuCallRow, dateStartColumn, 3, dateColumnCount).getValues();
+
+  const micuCalls = callRows[0];
+  const mhdCalls = callRows[2];
+  for (let colOffset = 0; colOffset < dateColumnCount; colOffset++) {
+    const columnNumber = dateStartColumn + colOffset;
+
+    const micuDoctor = normalizeMonthlyCallPointDoctorName_(micuCalls[colOffset]);
+    if (micuDoctor) {
+      if (!Object.prototype.hasOwnProperty.call(doctorTotals, micuDoctor)) {
+        throw new Error(
+          'MICU Call row contains unknown doctor "' + micuDoctor + '" at ' +
+          "R" + micuCallRow + "C" + columnNumber + "."
+        );
+      }
+      doctorTotals[micuDoctor] += toFiniteCallPointNumberOrZero_(
+        pointsRows[0][colOffset],
+        "R" + micuPointsRow + "C" + columnNumber
+      );
+    }
+
+    const mhdDoctor = normalizeMonthlyCallPointDoctorName_(mhdCalls[colOffset]);
+    if (mhdDoctor) {
+      if (!Object.prototype.hasOwnProperty.call(doctorTotals, mhdDoctor)) {
+        throw new Error(
+          'MHD Call row contains unknown doctor "' + mhdDoctor + '" at ' +
+          "R" + mhdCallRow + "C" + columnNumber + "."
+        );
+      }
+      doctorTotals[mhdDoctor] += toFiniteCallPointNumberOrZero_(
+        pointsRows[1][colOffset],
+        "R" + mhdPointsRow + "C" + columnNumber
+      );
+    }
+  }
+
+  for (let i = 0; i < doctorRowBlocks.length; i++) {
+    const block = doctorRowBlocks[i];
+    const rowCount = block.endRow - block.startRow + 1;
+    const outputValues = [];
+    for (let r = 0; r < rowCount; r++) {
+      const rowNumber = block.startRow + r;
+      const doctorName = doctorNamesByRow[rowNumber];
+      outputValues.push([doctorName ? doctorTotals[doctorName] : ""]);
+    }
+    sheet.getRange(block.startRow, outputColumn, rowCount, 1).setValues(outputValues);
+  }
+
+  return {
+    ok: true,
+    updatedDoctorCount: Object.keys(doctorTotals).length,
+    outputColumn: "AE"
+  };
+}
+
 function getDefaultTrialComputeInvocationMode_() {
   return "LOCAL_SIMULATED_EXTERNAL";
 }
