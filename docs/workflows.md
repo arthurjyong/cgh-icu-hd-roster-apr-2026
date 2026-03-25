@@ -6,7 +6,14 @@
 2. Benchmark controls are initialized/read on `SCORER_CONFIG`.
 3. Benchmark results are imported into sheet tables (`SEARCH_LOG`, `SEARCH_PROGRESS`).
 4. Winner is inspected via benchmark helper functions.
-5. Winner is applied to `Sheet1` by writeback routines (default strategy: `FAST_ASC_VALIDATE`, i.e. resolve the same comparison-group scope rules first, then sort scoped `SEARCH_LOG` rows by lowest `BestScore`, validate-on-demand, and stop at first writeback-safe winner).
+5. Winner is applied to `Sheet1` by writeback routines (default strategy: `FAST_ASC_VALIDATE` + `LEAN_OPERATIONAL` validation; scoped `SEARCH_LOG` rows are sorted by lowest `BestScore`, validated on-demand, and selection stops at first writeback-safe winner).
+6. Before winner selection, duplicate cleanup runs against `SEARCH_LOG` and `SEARCH_PROGRESS`:
+   - exact duplicates (`RunId` + `BestScore` [+ same artifact fields]) are auto-deleted bottom-up;
+   - conflict duplicates (same `RunId` with differing key fields) are resolved via targeted Drive checks (`SEARCH_PROGRESS` cleanup follows RunId-level canonical outcome).
+   - when Drive checks are inconclusive/transient for a conflict group, cleanup skips destructive pruning for that RunId.
+7. Operational default guardrails:
+   - `maxAttempts=15` and `maxFailureSamples=5` (overrideable via options),
+   - concise failure summaries include attempted `RunId` values and sampled reasons.
 
 Common entrypoints:
 - `initializeBenchmarkControlPanel`
@@ -82,3 +89,8 @@ Writeback depends on a valid `transport_trial_result_v1` that includes `bestAllo
 - rows are written slot-by-slot (`MICU_CALL` row 35, etc.).
 
 If validation fails, writeback throws and does not partially apply output.
+
+Mode split:
+
+- **Operational button flow (`applyCurrentBestBenchmarkRoster`)** uses lean transport/writeback safety checks only (no `run_manifest.json` reads).
+- **Strict audit/manual mode (`STRICT_FULL_SCAN` / `STRICT_AUDIT`)** additionally enforces manifest/provenance checks.
