@@ -284,6 +284,35 @@ function parseMaybeJson(text) {
   }
 }
 
+function logCampaignLifecycle(eventName, payload) {
+  const event = String(eventName || '').trim() || 'campaign_event';
+  const data = payload && typeof payload === 'object' ? payload : {};
+  console.log(JSON.stringify({
+    ok: true,
+    service: 'benchmark-orchestrator',
+    event,
+    at: new Date().toISOString(),
+    ...data
+  }));
+}
+
+function getReportSummary(report) {
+  return report && report.summary && typeof report.summary === 'object'
+    ? report.summary
+    : {};
+}
+
+function isTerminalReportSummary(report, plannedRunCount) {
+  const summary = getReportSummary(report);
+  if (!Number.isInteger(summary.completedCount)) {
+    return false;
+  }
+  if (!Number.isInteger(plannedRunCount) || plannedRunCount < 0) {
+    return false;
+  }
+  return summary.completedCount === plannedRunCount;
+}
+
 async function runCampaign(input) {
   const config = normalizeConfig(input);
   ensureDir(config.campaignDir);
@@ -302,6 +331,14 @@ async function runCampaign(input) {
     startedAt: new Date().toISOString()
   });
   writeCampaignStatusFile(statusFilePath, state);
+  logCampaignLifecycle('campaign_initialized', {
+    campaignId: state.campaignId,
+    campaignFolderName: state.campaignFolderName,
+    plannedRunCount: state.plannedRunCount,
+    baseSeed: config.baseSeed,
+    statusFilePath,
+    campaignReportPath
+  });
 
   state = validateCampaignState({
     ...state,
@@ -310,6 +347,11 @@ async function runCampaign(input) {
     lastUpdated: new Date().toISOString()
   });
   writeCampaignStatusFile(statusFilePath, state);
+  logCampaignLifecycle('campaign_running', {
+    campaignId: state.campaignId,
+    campaignFolderName: state.campaignFolderName,
+    plannedRunCount: state.plannedRunCount
+  });
 
   const launcherArgs = buildLauncherArgs(config);
   const child = spawn(process.execPath, launcherArgs, {
@@ -338,8 +380,25 @@ async function runCampaign(input) {
       }
       state = updateStateFromReport(state, report, CAMPAIGN_STATUSES.RUNNING);
       writeCampaignStatusFile(statusFilePath, state);
+      const summary = getReportSummary(report);
+      logCampaignLifecycle('campaign_report_refresh', {
+        campaignId: state.campaignId,
+        campaignFolderName: state.campaignFolderName,
+        status: state.status,
+        plannedRunCount: state.plannedRunCount,
+        completedRunCount: state.completedRunCount,
+        summaryCompletedCount: summary.completedCount,
+        summaryOkCount: summary.okCount,
+        summaryFailedCount: summary.failedCount,
+        reportMtimeMs: lastReportMtimeMs
+      });
     } catch (error) {
       // swallow polling errors; final process result will determine campaign status
+      logCampaignLifecycle('campaign_report_refresh_error', {
+        campaignId: state.campaignId,
+        campaignFolderName: state.campaignFolderName,
+        message: error && error.message ? error.message : String(error)
+      });
     }
   }, Math.max(1000, config.statusPollIntervalMs));
 
@@ -354,6 +413,13 @@ async function runCampaign(input) {
   const result = await new Promise((resolve) => {
     child.on('error', (error) => resolve({ error }));
     child.on('close', (code, signal) => resolve({ code, signal }));
+  });
+  logCampaignLifecycle('campaign_child_exit', {
+    campaignId: state.campaignId,
+    campaignFolderName: state.campaignFolderName,
+    childCode: result && result.code != null ? result.code : null,
+    childSignal: result && result.signal != null ? result.signal : null,
+    childError: result && result.error ? (result.error.message || String(result.error)) : null
   });
 
   clearInterval(refreshTimer);
@@ -376,6 +442,15 @@ async function runCampaign(input) {
       failedAt: new Date().toISOString()
     });
     writeCampaignStatusFile(statusFilePath, state);
+    logCampaignLifecycle('campaign_failed', {
+      campaignId: state.campaignId,
+      campaignFolderName: state.campaignFolderName,
+      errorMessage,
+      status: state.status,
+      plannedRunCount: state.plannedRunCount,
+      completedRunCount: state.completedRunCount,
+      reportTerminalCounts: isTerminalReportSummary(report, state.plannedRunCount)
+    });
 
     return {
       ok: false,
@@ -400,6 +475,13 @@ async function runCampaign(input) {
     completedAt: new Date().toISOString()
   });
   writeCampaignStatusFile(statusFilePath, state);
+  logCampaignLifecycle('campaign_complete', {
+    campaignId: state.campaignId,
+    campaignFolderName: state.campaignFolderName,
+    status: state.status,
+    plannedRunCount: state.plannedRunCount,
+    completedRunCount: state.completedRunCount
+  });
 
   return {
     ok: true,

@@ -32,7 +32,10 @@ function getBenchmarkOrchestrationPropertyKeys_() {
     startedAtIso: prefix + 'STARTED_AT_ISO',
     pollTriggerUniqueId: prefix + 'POLL_TRIGGER_UNIQUE_ID',
     lastPollAtIso: prefix + 'LAST_POLL_AT_ISO',
-    campaignSeed: prefix + 'CAMPAIGN_SEED'
+    campaignSeed: prefix + 'CAMPAIGN_SEED',
+    reconciliationStartedAtIso: prefix + 'RECONCILIATION_STARTED_AT_ISO',
+    reconciliationLastSignature: prefix + 'RECONCILIATION_LAST_SIGNATURE',
+    reconciliationLastChangedAtIso: prefix + 'RECONCILIATION_LAST_CHANGED_AT_ISO'
   };
 }
 
@@ -102,7 +105,10 @@ function getActiveBenchmarkCampaignState_() {
     startedAtIso: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.startedAtIso)),
     pollTriggerUniqueId: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.pollTriggerUniqueId)),
     lastPollAtIso: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.lastPollAtIso)),
-    campaignSeed: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.campaignSeed))
+    campaignSeed: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.campaignSeed)),
+    reconciliationStartedAtIso: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.reconciliationStartedAtIso)),
+    reconciliationLastSignature: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.reconciliationLastSignature)),
+    reconciliationLastChangedAtIso: normalizeBenchmarkOrchestrationString_(properties.getProperty(keys.reconciliationLastChangedAtIso))
   };
 }
 
@@ -120,6 +126,9 @@ function setActiveBenchmarkCampaignState_(state) {
   values[keys.pollTriggerUniqueId] = normalizeBenchmarkOrchestrationString_(payload.pollTriggerUniqueId);
   values[keys.lastPollAtIso] = normalizeBenchmarkOrchestrationString_(payload.lastPollAtIso);
   values[keys.campaignSeed] = normalizeBenchmarkOrchestrationString_(payload.campaignSeed);
+  values[keys.reconciliationStartedAtIso] = normalizeBenchmarkOrchestrationString_(payload.reconciliationStartedAtIso);
+  values[keys.reconciliationLastSignature] = normalizeBenchmarkOrchestrationString_(payload.reconciliationLastSignature);
+  values[keys.reconciliationLastChangedAtIso] = normalizeBenchmarkOrchestrationString_(payload.reconciliationLastChangedAtIso);
   properties.setProperties(values, false);
 }
 
@@ -135,6 +144,9 @@ function clearActiveBenchmarkCampaignState_() {
   properties.deleteProperty(keys.pollTriggerUniqueId);
   properties.deleteProperty(keys.lastPollAtIso);
   properties.deleteProperty(keys.campaignSeed);
+  properties.deleteProperty(keys.reconciliationStartedAtIso);
+  properties.deleteProperty(keys.reconciliationLastSignature);
+  properties.deleteProperty(keys.reconciliationLastChangedAtIso);
 }
 
 function getBenchmarkCampaignPollTriggerFunctionName_() {
@@ -374,6 +386,129 @@ function computeBenchmarkFreshnessBucket_(lastBackendConfirmedAtIso) {
   return { bucket: 'STALE', ageMinutes: ageMinutes };
 }
 
+function getBenchmarkReconciliationTimeoutMs_() {
+  return 5 * 60 * 1000;
+}
+
+function parseBenchmarkDateMsOrNull_(value) {
+  const normalized = normalizeBenchmarkOrchestrationString_(value);
+  if (!normalized) {
+    return null;
+  }
+  const parsed = new Date(normalized);
+  const time = parsed.getTime();
+  return isNaN(time) ? null : time;
+}
+
+function getBenchmarkSearchLogRunCountForCampaignFolder_(campaignFolderName) {
+  if (typeof readBenchmarkTrialsRowsAsObjects_ !== 'function') {
+    return {
+      ok: false,
+      count: null,
+      message: 'readBenchmarkTrialsRowsAsObjects_ unavailable.'
+    };
+  }
+
+  const folderName = normalizeBenchmarkOrchestrationString_(campaignFolderName);
+  const rowsData = readBenchmarkTrialsRowsAsObjects_();
+  const rows = rowsData && Array.isArray(rowsData.rows) ? rowsData.rows : [];
+  const uniqueRunIds = {};
+  let count = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || {};
+    const rowFolder = normalizeBenchmarkOrchestrationString_(row.CampaignFolderName);
+    if (!rowFolder || rowFolder !== folderName) {
+      continue;
+    }
+    const runIdKey = normalizeBenchmarkOrchestrationString_(row.RunId).toLowerCase();
+    if (!runIdKey || uniqueRunIds[runIdKey]) {
+      continue;
+    }
+    uniqueRunIds[runIdKey] = true;
+    count += 1;
+  }
+
+  return {
+    ok: true,
+    count: count
+  };
+}
+
+function getBenchmarkScorerConfigProgressSnapshot_() {
+  if (typeof resolveBenchmarkUiControlRange_ !== 'function') {
+    return {
+      ok: false,
+      completedRuns: null,
+      plannedRuns: null,
+      message: 'resolveBenchmarkUiControlRange_ unavailable.'
+    };
+  }
+
+  const completedRaw = resolveBenchmarkUiControlRange_('completedRuns').getValue();
+  const plannedRaw = resolveBenchmarkUiControlRange_('plannedRuns').getValue();
+  const completedRuns = completedRaw === '' || completedRaw === null || completedRaw === undefined
+    ? null
+    : Number(completedRaw);
+  const plannedRuns = plannedRaw === '' || plannedRaw === null || plannedRaw === undefined
+    ? null
+    : Number(plannedRaw);
+
+  return {
+    ok: true,
+    completedRuns: Number.isFinite(completedRuns) ? completedRuns : null,
+    plannedRuns: Number.isFinite(plannedRuns) ? plannedRuns : null
+  };
+}
+
+function evaluateBenchmarkTerminalReconciliationGate_(context) {
+  const source = context || {};
+  const expectedCompleted = Number(source.expectedCompleted);
+  const expectedPlanned = Number(source.expectedPlanned);
+  const campaignFolderName = normalizeBenchmarkOrchestrationString_(source.campaignFolderName);
+  const searchLog = getBenchmarkSearchLogRunCountForCampaignFolder_(campaignFolderName);
+  const scorerConfig = getBenchmarkScorerConfigProgressSnapshot_();
+
+  const checks = {
+    backendTerminalCounts: Number.isFinite(expectedCompleted) && Number.isFinite(expectedPlanned) &&
+      expectedCompleted === expectedPlanned && expectedPlanned >= 0,
+    searchLogMatched: searchLog.ok === true && Number(searchLog.count) === expectedPlanned,
+    scorerConfigMatched: scorerConfig.ok === true &&
+      Number(scorerConfig.completedRuns) === expectedCompleted &&
+      Number(scorerConfig.plannedRuns) === expectedPlanned
+  };
+
+  const issues = [];
+  if (!checks.backendTerminalCounts) {
+    issues.push('Backend terminal counts are not confirmed.');
+  }
+  if (!checks.searchLogMatched) {
+    issues.push('SEARCH_LOG campaign run count mismatch. expected=' + expectedPlanned + ', actual=' + searchLog.count + '.');
+  }
+  if (!checks.scorerConfigMatched) {
+    issues.push(
+      'SCORER_CONFIG progress mismatch. expected completed/planned=' +
+      expectedCompleted + '/' + expectedPlanned +
+      ', actual=' + scorerConfig.completedRuns + '/' + scorerConfig.plannedRuns + '.'
+    );
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues: issues,
+    checks: checks,
+    searchLog: searchLog,
+    scorerConfig: scorerConfig,
+    signature: JSON.stringify({
+      searchLogCount: searchLog.count,
+      scorerCompletedRuns: scorerConfig.completedRuns,
+      scorerPlannedRuns: scorerConfig.plannedRuns,
+      expectedCompleted: expectedCompleted,
+      expectedPlanned: expectedPlanned
+    })
+  };
+}
+
 function buildBenchmarkStatusProjectionState_(payload) {
   const source = payload || {};
   const backendStatus = normalizeBenchmarkOrchestrationString_(source.backendStatus).toUpperCase();
@@ -582,7 +717,10 @@ function buildCompactBenchmarkCampaignStateSummary_(state) {
     startedAtIso: active.startedAtIso || '',
     pollTriggerUniqueId: active.pollTriggerUniqueId || '',
     lastPollAtIso: active.lastPollAtIso || '',
-    campaignSeed: active.campaignSeed || ''
+    campaignSeed: active.campaignSeed || '',
+    reconciliationStartedAtIso: active.reconciliationStartedAtIso || '',
+    reconciliationLastSignature: active.reconciliationLastSignature || '',
+    reconciliationLastChangedAtIso: active.reconciliationLastChangedAtIso || ''
   };
 }
 
@@ -678,7 +816,10 @@ function startBenchmarkCampaignFromUi_() {
     startedAtIso: started.startedAt || nowIso,
     pollTriggerUniqueId: '',
     lastPollAtIso: nowIso,
-    campaignSeed: started.baseSeed != null ? String(started.baseSeed) : String(payload.baseSeed)
+    campaignSeed: started.baseSeed != null ? String(started.baseSeed) : String(payload.baseSeed),
+    reconciliationStartedAtIso: '',
+    reconciliationLastSignature: '',
+    reconciliationLastChangedAtIso: ''
   });
 
   installBenchmarkCampaignPollTrigger_();
@@ -826,7 +967,7 @@ function pollActiveBenchmarkCampaign_() {
     importResult: importResult,
     activeCampaignFolderName: state.campaignFolderName
   });
-  const projectedState = buildBenchmarkStatusProjectionState_({
+  let projectedState = buildBenchmarkStatusProjectionState_({
     backendStatus: statusUpper,
     importAttempted: importAttempted,
     importOk: importResult ? importResult.ok === true : false,
@@ -844,11 +985,58 @@ function pollActiveBenchmarkCampaign_() {
   if (staleWarning) {
     warningMessages.push(staleWarning);
   }
+  if (statusResponse.statusInference) {
+    warningMessages.push('Status inference: ' + statusResponse.statusInference);
+  }
+
+  let operationalReconciliationState = reconciliation.reconciliationState;
+  if (projectedState === 'COMPLETE') {
+    const gate = evaluateBenchmarkTerminalReconciliationGate_({
+      campaignFolderName: state.campaignFolderName,
+      expectedCompleted: completedRunCount,
+      expectedPlanned: plannedRunCount
+    });
+    if (gate.ok !== true) {
+      const nowIsoGate = new Date().toISOString();
+      const previousSignature = normalizeBenchmarkOrchestrationString_(state.reconciliationLastSignature);
+      const previousChangedAtMs = parseBenchmarkDateMsOrNull_(state.reconciliationLastChangedAtIso);
+      const signatureChanged = !previousSignature || previousSignature !== gate.signature;
+      if (!normalizeBenchmarkOrchestrationString_(state.reconciliationStartedAtIso)) {
+        state.reconciliationStartedAtIso = nowIsoGate;
+      }
+      state.reconciliationLastSignature = gate.signature;
+      state.reconciliationLastChangedAtIso = signatureChanged || !previousChangedAtMs
+        ? nowIsoGate
+        : state.reconciliationLastChangedAtIso;
+
+      const lastChangedAtMs = parseBenchmarkDateMsOrNull_(state.reconciliationLastChangedAtIso) || Date.now();
+      const stagnantMs = Math.max(0, Date.now() - lastChangedAtMs);
+      const timedOut = stagnantMs >= getBenchmarkReconciliationTimeoutMs_();
+      const details = gate.issues.join(' | ');
+      warningMessages.push('Completion reconciliation pending: ' + details);
+      if (timedOut) {
+        projectedState = 'RECONCILIATION_TIMEOUT';
+        operationalReconciliationState = 'TIMEOUT';
+        warningMessages.push('Reconciliation timed out after ' + Math.round(stagnantMs / 60000) + ' minutes with no change.');
+      } else {
+        projectedState = 'RECONCILING';
+        operationalReconciliationState = 'PENDING';
+      }
+    } else {
+      state.reconciliationStartedAtIso = '';
+      state.reconciliationLastSignature = '';
+      state.reconciliationLastChangedAtIso = '';
+    }
+  } else {
+    state.reconciliationStartedAtIso = '';
+    state.reconciliationLastSignature = '';
+    state.reconciliationLastChangedAtIso = '';
+  }
 
   writeBenchmarkUiOperationalHealth_({
     statusSource: statusResponse.contractVersion ? 'BACKEND_STATUS_FILE' : 'ORCHESTRATOR_RUNTIME',
     freshness: freshness.bucket,
-    reconciliationState: reconciliation.reconciliationState,
+    reconciliationState: operationalReconciliationState,
     warning: warningMessages.join(' | '),
     lastBackendConfirmedAt: statusResponse.lastUpdated || statusResponse.completedAt || ''
   });
@@ -906,13 +1094,16 @@ function pollActiveBenchmarkCampaign_() {
   if (
     projectedState === 'COMPLETE' ||
     projectedState === 'FAILED' ||
-    projectedState === 'CANCELLED'
+    projectedState === 'CANCELLED' ||
+    projectedState === 'RECONCILIATION_TIMEOUT'
   ) {
     removeBenchmarkCampaignPollTrigger_();
     if (projectedState === 'COMPLETE') {
       writeBenchmarkUiStatus_('COMPLETE');
     } else if (projectedState === 'FAILED') {
       writeBenchmarkUiStatus_(statusResponse.errorMessage ? 'FAILED: ' + statusResponse.errorMessage : 'FAILED');
+    } else if (projectedState === 'RECONCILIATION_TIMEOUT') {
+      writeBenchmarkUiStatus_('RECONCILIATION TIMEOUT');
     } else {
       writeBenchmarkUiStatus_('CANCELLED');
     }
