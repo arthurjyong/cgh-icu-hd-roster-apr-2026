@@ -374,6 +374,115 @@ function computeBenchmarkFreshnessBucket_(lastBackendConfirmedAtIso) {
   return { bucket: 'STALE', ageMinutes: ageMinutes };
 }
 
+function getBenchmarkSearchLogRunCountForCampaignFolder_(campaignFolderName) {
+  if (typeof readBenchmarkTrialsRowsAsObjects_ !== 'function') {
+    return {
+      ok: false,
+      count: null,
+      message: 'readBenchmarkTrialsRowsAsObjects_ unavailable.'
+    };
+  }
+
+  const folderName = normalizeBenchmarkOrchestrationString_(campaignFolderName);
+  const rowsData = readBenchmarkTrialsRowsAsObjects_();
+  const rows = rowsData && Array.isArray(rowsData.rows) ? rowsData.rows : [];
+  const uniqueRunIds = {};
+  let count = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || {};
+    const rowFolder = normalizeBenchmarkOrchestrationString_(row.CampaignFolderName);
+    if (!rowFolder || rowFolder !== folderName) {
+      continue;
+    }
+    const runIdKey = normalizeBenchmarkOrchestrationString_(row.RunId).toLowerCase();
+    if (!runIdKey || uniqueRunIds[runIdKey]) {
+      continue;
+    }
+    uniqueRunIds[runIdKey] = true;
+    count += 1;
+  }
+
+  return {
+    ok: true,
+    count: count
+  };
+}
+
+function getBenchmarkScorerConfigProgressSnapshot_() {
+  if (typeof resolveBenchmarkUiControlRange_ !== 'function') {
+    return {
+      ok: false,
+      completedRuns: null,
+      plannedRuns: null,
+      message: 'resolveBenchmarkUiControlRange_ unavailable.'
+    };
+  }
+
+  const completedRaw = resolveBenchmarkUiControlRange_('completedRuns').getValue();
+  const plannedRaw = resolveBenchmarkUiControlRange_('plannedRuns').getValue();
+  const completedRuns = completedRaw === '' || completedRaw === null || completedRaw === undefined
+    ? null
+    : Number(completedRaw);
+  const plannedRuns = plannedRaw === '' || plannedRaw === null || plannedRaw === undefined
+    ? null
+    : Number(plannedRaw);
+
+  return {
+    ok: true,
+    completedRuns: Number.isFinite(completedRuns) ? completedRuns : null,
+    plannedRuns: Number.isFinite(plannedRuns) ? plannedRuns : null
+  };
+}
+
+function evaluateBenchmarkTerminalReconciliationGate_(context) {
+  const source = context || {};
+  const expectedCompleted = Number(source.expectedCompleted);
+  const expectedPlanned = Number(source.expectedPlanned);
+  const campaignFolderName = normalizeBenchmarkOrchestrationString_(source.campaignFolderName);
+  const searchLog = getBenchmarkSearchLogRunCountForCampaignFolder_(campaignFolderName);
+  const scorerConfig = getBenchmarkScorerConfigProgressSnapshot_();
+
+  const checks = {
+    backendTerminalCounts: Number.isFinite(expectedCompleted) && Number.isFinite(expectedPlanned) &&
+      expectedCompleted === expectedPlanned && expectedPlanned >= 0,
+    searchLogMatched: searchLog.ok === true && Number(searchLog.count) === expectedPlanned,
+    scorerConfigMatched: scorerConfig.ok === true &&
+      Number(scorerConfig.completedRuns) === expectedCompleted &&
+      Number(scorerConfig.plannedRuns) === expectedPlanned
+  };
+
+  const issues = [];
+  if (!checks.backendTerminalCounts) {
+    issues.push('Backend terminal counts are not confirmed.');
+  }
+  if (!checks.searchLogMatched) {
+    issues.push('SEARCH_LOG campaign run count mismatch. expected=' + expectedPlanned + ', actual=' + searchLog.count + '.');
+  }
+  if (!checks.scorerConfigMatched) {
+    issues.push(
+      'SCORER_CONFIG progress mismatch. expected completed/planned=' +
+      expectedCompleted + '/' + expectedPlanned +
+      ', actual=' + scorerConfig.completedRuns + '/' + scorerConfig.plannedRuns + '.'
+    );
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues: issues,
+    checks: checks,
+    searchLog: searchLog,
+    scorerConfig: scorerConfig,
+    signature: JSON.stringify({
+      searchLogCount: searchLog.count,
+      scorerCompletedRuns: scorerConfig.completedRuns,
+      scorerPlannedRuns: scorerConfig.plannedRuns,
+      expectedCompleted: expectedCompleted,
+      expectedPlanned: expectedPlanned
+    })
+  };
+}
+
 function buildBenchmarkStatusProjectionState_(payload) {
   const source = payload || {};
   const backendStatus = normalizeBenchmarkOrchestrationString_(source.backendStatus).toUpperCase();
@@ -826,7 +935,7 @@ function pollActiveBenchmarkCampaign_() {
     importResult: importResult,
     activeCampaignFolderName: state.campaignFolderName
   });
-  const projectedState = buildBenchmarkStatusProjectionState_({
+  let projectedState = buildBenchmarkStatusProjectionState_({
     backendStatus: statusUpper,
     importAttempted: importAttempted,
     importOk: importResult ? importResult.ok === true : false,
@@ -844,11 +953,29 @@ function pollActiveBenchmarkCampaign_() {
   if (staleWarning) {
     warningMessages.push(staleWarning);
   }
+  if (statusResponse.statusInference) {
+    warningMessages.push('Status inference: ' + statusResponse.statusInference);
+  }
+
+  let operationalReconciliationState = reconciliation.reconciliationState;
+  if (projectedState === 'COMPLETE') {
+    const gate = evaluateBenchmarkTerminalReconciliationGate_({
+      campaignFolderName: state.campaignFolderName,
+      expectedCompleted: completedRunCount,
+      expectedPlanned: plannedRunCount
+    });
+    if (gate.ok !== true) {
+      const details = gate.issues.join(' | ');
+      warningMessages.push('Completion reconciliation pending: ' + details);
+      projectedState = 'RUNNING';
+      operationalReconciliationState = 'PENDING';
+    }
+  }
 
   writeBenchmarkUiOperationalHealth_({
     statusSource: statusResponse.contractVersion ? 'BACKEND_STATUS_FILE' : 'ORCHESTRATOR_RUNTIME',
     freshness: freshness.bucket,
-    reconciliationState: reconciliation.reconciliationState,
+    reconciliationState: operationalReconciliationState,
     warning: warningMessages.join(' | '),
     lastBackendConfirmedAt: statusResponse.lastUpdated || statusResponse.completedAt || ''
   });
@@ -943,7 +1070,7 @@ function pollActiveBenchmarkCampaign_() {
     errorMessage: statusResponse.errorMessage || statusResponse.error || '',
     statusSource: statusResponse.contractVersion ? 'BACKEND_STATUS_FILE' : 'ORCHESTRATOR_RUNTIME',
     freshness: freshness.bucket,
-    reconciliationState: reconciliation.reconciliationState,
+    reconciliationState: operationalReconciliationState,
     warning: warningMessages.join(' | '),
     lastBackendConfirmedAt: statusResponse.lastUpdated || statusResponse.completedAt || '',
     importOk: importResult ? importResult.ok === true : false,
