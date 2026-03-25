@@ -506,10 +506,51 @@ function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
   }
 
   let bestWinner = null;
+  let winnerSource = '';
+  const importedSummary = imported && imported.summary ? imported.summary : null;
+  const importedWinnerRunId = normalizeBenchmarkOrchestrationString_(importedSummary && importedSummary.winnerRunId);
+  const importedWinnerBestScore = importedSummary && importedSummary.winnerBestScore !== undefined
+    ? importedSummary.winnerBestScore
+    : null;
+  if (importedWinnerRunId) {
+    bestWinner = {
+      ok: true,
+      runId: importedWinnerRunId,
+      bestScore: importedWinnerBestScore,
+      campaignFolderName: folderName
+    };
+    winnerSource = 'IMPORTED_REPORT_WINNER';
+  }
+
   try {
-    bestWinner = debugInspectBestBenchmarkTrialsWinnerForWriteback();
+    const inspected = debugInspectBestBenchmarkTrialsWinnerForWriteback();
+    if (!bestWinner) {
+      if (
+        inspected &&
+        inspected.ok === true &&
+        normalizeBenchmarkOrchestrationString_(inspected.campaignFolderName) === folderName
+      ) {
+        bestWinner = inspected;
+        winnerSource = 'SEARCH_LOG_WINNER_SCOPED_TO_ACTIVE_CAMPAIGN';
+      } else {
+        bestWinner = {
+          ok: false,
+          skipped: true,
+          reason: 'SEARCH_LOG_WINNER_OUTSIDE_ACTIVE_CAMPAIGN',
+          message: inspected && inspected.ok === true
+            ? (
+              'Best SEARCH_LOG winner belongs to campaign "' +
+              normalizeBenchmarkOrchestrationString_(inspected.campaignFolderName) +
+              '", not active campaign "' + folderName + '".'
+            )
+            : (inspected && inspected.message ? inspected.message : 'Unable to inspect best SEARCH_LOG winner.')
+        };
+      }
+    }
   } catch (err) {
-    bestWinner = { ok: false, message: String(err && err.message ? err.message : err) };
+    if (!bestWinner) {
+      bestWinner = { ok: false, message: String(err && err.message ? err.message : err) };
+    }
   }
 
   if (bestWinner && bestWinner.ok === true) {
@@ -524,6 +565,7 @@ function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
   return {
     ok: true,
     campaignFolderName: folderName,
+    winnerSource: winnerSource,
     bestWinner: bestWinner,
     loaded: imported && imported.loaded ? imported.loaded : null,
     summary: imported && imported.summary ? imported.summary : null,
