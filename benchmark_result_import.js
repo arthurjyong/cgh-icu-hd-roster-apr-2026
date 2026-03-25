@@ -3310,16 +3310,18 @@ function applyBestBenchmarkWinnerToSheet_(options) {
   }
 
   let recomputeResult = null;
+  let wroteRosterToSheet = false;
   try {
     writeTransportTrialResultToSheet_(selection.transportResult);
+    wroteRosterToSheet = true;
     if (typeof recomputeMonthlyCallPointsFromFinalRoster_ === 'function') {
       recomputeResult = recomputeMonthlyCallPointsFromFinalRoster_();
     }
   } catch (err) {
     return {
       ok: false,
-      applied: true,
-      reason: 'WRITE_OR_RECOMPUTE_FAILED',
+      applied: wroteRosterToSheet,
+      reason: wroteRosterToSheet ? 'RECOMPUTE_FAILED_AFTER_WRITE' : 'WRITE_FAILED',
       message: String(err && err.message ? err.message : err)
     };
   }
