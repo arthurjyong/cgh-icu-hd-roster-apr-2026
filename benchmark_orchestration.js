@@ -585,72 +585,19 @@ function ensureBenchmarkTabsCompleteOrReset_() {
 
 function maybeAutoApplyOperationalBestWinner_(options) {
   const context = options || {};
-  let selection;
-  try {
-    selection = selectBestBenchmarkTrialsWinnerForWriteback_();
-  } catch (err) {
-    return {
-      ok: false,
-      skipped: true,
-      reason: 'NO_VALID_BEST_WINNER',
-      message: String(err && err.message ? err.message : err)
-    };
-  }
-
-  const candidate = selection && selection.candidateRow ? selection.candidateRow : {};
-  const newBestScore = candidate && typeof candidate.BestScore === 'number' ? candidate.BestScore : null;
-  if (newBestScore === null) {
-    return {
-      ok: false,
-      skipped: true,
-      reason: 'BEST_SCORE_MISSING',
-      message: 'Best candidate is missing numeric BestScore.'
-    };
-  }
-
-  const metadata = readBenchmarkUiAppliedRosterMetadata_();
-  const previousAppliedScore = metadata.lastAppliedBestScore;
-  const shouldApply = previousAppliedScore === null || newBestScore < previousAppliedScore;
-  if (!shouldApply) {
-    return {
-      ok: true,
-      skipped: true,
-      reason: 'STRICT_LOWER_REQUIRED',
-      lastAppliedBestScore: previousAppliedScore,
-      candidateBestScore: newBestScore
-    };
-  }
-
-  try {
-    writeTransportTrialResultToSheet_(selection.transportResult);
-    writeBenchmarkUiAppliedRosterMetadata_({
-      lastAppliedBestScore: newBestScore,
-      lastAppliedRunId: candidate.RunId || '',
-      lastAppliedCampaignFolder: candidate.CampaignFolderName || context.campaignFolderName || '',
-      lastAppliedTimestamp: new Date(),
-      lastAppliedSourceMode: context.sourceMode || 'OPERATIONAL_RED_BUTTON'
-    });
-    return {
-      ok: true,
-      applied: true,
-      lastAppliedBestScore: newBestScore,
-      runId: candidate.RunId || '',
-      campaignFolderName: candidate.CampaignFolderName || context.campaignFolderName || ''
-    };
-  } catch (err) {
-    const message = String(err && err.message ? err.message : err);
+  const result = applyBestBenchmarkWinnerToSheet_({
+    sourceMode: context.sourceMode || 'OPERATIONAL_RED_BUTTON',
+    campaignFolderName: context.campaignFolderName || ''
+  });
+  if (result && result.ok !== true) {
     writeBenchmarkUiStatus_('RUNNING: AUTO-APPLY ERROR');
     Logger.log(JSON.stringify({
       ok: false,
       stage: 'auto_apply_operational_best',
-      message: message
+      message: result.message || 'Unknown auto-apply error.'
     }, null, 2));
-    return {
-      ok: false,
-      applied: false,
-      message: message
-    };
   }
+  return result;
 }
 
 function startBenchmarkCampaignFromUi_() {
