@@ -338,6 +338,27 @@ function summarizeBenchmarkUiActionResult_(result) {
     ]);
   }
 
+  if (result.monthlyCallPointsUpdate && typeof result.monthlyCallPointsUpdate === 'object') {
+    summary.monthlyCallPointsUpdate = {};
+    copyDefinedBenchmarkUiFields_(result.monthlyCallPointsUpdate, summary.monthlyCallPointsUpdate, [
+      'ok',
+      'updatedDoctorCount',
+      'outputColumn'
+    ]);
+    if (Array.isArray(result.monthlyCallPointsUpdate.doctorPointTotals)) {
+      summary.monthlyCallPointsUpdate.doctorPointTotals = result.monthlyCallPointsUpdate.doctorPointTotals.map(function(item) {
+        if (!item || typeof item !== 'object') {
+          return item;
+        }
+        return {
+          doctorName: item.doctorName || null,
+          rowNumber: item.rowNumber === undefined ? null : item.rowNumber,
+          totalCallPoints: item.totalCallPoints === undefined ? null : item.totalCallPoints
+        };
+      });
+    }
+  }
+
   if (result.state && typeof result.state === 'object') {
     summary.state = {};
     copyDefinedBenchmarkUiFields_(result.state, summary.state, [
