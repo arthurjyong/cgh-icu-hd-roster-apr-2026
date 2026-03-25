@@ -2502,33 +2502,92 @@ function buildSearchSheetDuplicateGroups_(sheetRows) {
 
 function chooseCanonicalConflictDuplicateRow_(rows, resolverCache, executionOptions) {
   const candidates = Array.isArray(rows) ? rows : [];
+  const validRows = [];
+  const invalidRows = [];
+  const unknownRows = [];
   const failures = [];
+
+  function classifyBenchmarkConflictValidationError_(message) {
+    const normalized = trimmedStringOrBlank_(message).toLowerCase();
+    if (!normalized) {
+      return 'UNKNOWN';
+    }
+
+    const transientMarkers = [
+      'service invoked too many times',
+      'service unavailable',
+      'timed out',
+      'timeout',
+      'rate limit',
+      'quota',
+      'try again later',
+      'internal error',
+      'temporarily unavailable'
+    ];
+
+    for (let i = 0; i < transientMarkers.length; i++) {
+      if (normalized.indexOf(transientMarkers[i]) >= 0) {
+        return 'UNKNOWN';
+      }
+    }
+
+    return 'INVALID';
+  }
 
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     try {
-      const loaded = loadAndValidateBenchmarkRunArtifactForWritebackWithMode_(candidate, {
+      loadAndValidateBenchmarkRunArtifactForWritebackWithMode_(candidate, {
         validationMode: 'LEAN_OPERATIONAL',
         selectionStrategy: executionOptions.selectionStrategy,
         resolverCache: resolverCache
       });
-      return {
-        canonical: candidate,
-        loadedArtifact: loaded,
-        failures: failures
-      };
+      validRows.push(candidate);
     } catch (err) {
+      const reason = String(err && err.message ? err.message : err);
+      const classification = classifyBenchmarkConflictValidationError_(reason);
       failures.push({
         rowNumber: candidate._rowNumber || null,
         runId: trimmedStringOrBlank_(candidate.RunId),
-        reason: String(err && err.message ? err.message : err)
+        reason: reason,
+        classification: classification
       });
+      if (classification === 'INVALID') {
+        invalidRows.push(candidate);
+      } else {
+        unknownRows.push(candidate);
+      }
     }
   }
 
+  if (validRows.length > 0) {
+    return {
+      decision: 'KEEP_CANONICAL',
+      canonical: validRows[0],
+      validRows: validRows,
+      invalidRows: invalidRows,
+      unknownRows: unknownRows,
+      failures: failures
+    };
+  }
+
+  if (invalidRows.length > 0 && unknownRows.length === 0) {
+    return {
+      decision: 'DELETE_ALL_INVALID',
+      canonical: null,
+      validRows: validRows,
+      invalidRows: invalidRows,
+      unknownRows: unknownRows,
+      failures: failures
+    };
+  }
+
   return {
-    canonical: candidates[0] || null,
-    loadedArtifact: null,
+    decision: 'SKIP_INCONCLUSIVE',
+    canonical: null,
+    validRows: validRows,
+    invalidRows: invalidRows,
+    unknownRows: unknownRows,
     failures: failures
   };
 }
@@ -2546,8 +2605,11 @@ function autoCleanBenchmarkSearchSheetDuplicates_() {
   const stats = {
     exactDuplicateDeletionsCount: 0,
     conflictDuplicateChecksCount: 0,
-    conflictResolutionsPerformed: 0
+    conflictResolutionsPerformed: 0,
+    conflictDeleteAllRunIdCount: 0,
+    conflictInconclusiveSkipCount: 0
   };
+  const conflictProgressPlanByRunId = {};
 
   for (let i = 0; i < grouped.exactOrder.length; i++) {
     const key = grouped.exactOrder[i];
@@ -2577,7 +2639,30 @@ function autoCleanBenchmarkSearchSheetDuplicates_() {
       resolverCache,
       executionOptions
     );
+
+    if (!resolution || resolution.decision === 'SKIP_INCONCLUSIVE') {
+      stats.conflictInconclusiveSkipCount += 1;
+      continue;
+    }
+
     const canonicalRowNumber = resolution && resolution.canonical ? resolution.canonical._rowNumber : null;
+    const runIdPlanKey = runIdKey;
+    if (resolution.decision === 'DELETE_ALL_INVALID') {
+      conflictProgressPlanByRunId[runIdPlanKey] = {
+        action: 'DELETE_ALL_PROGRESS_ROWS'
+      };
+      stats.conflictDeleteAllRunIdCount += 1;
+      for (let c = 0; c < remainingRunRows.length; c++) {
+        deleteRowNumbersMap[remainingRunRows[c]._rowNumber] = true;
+        stats.conflictResolutionsPerformed += 1;
+      }
+      continue;
+    }
+
+    conflictProgressPlanByRunId[runIdPlanKey] = {
+      action: 'KEEP_CANONICAL_PROGRESS_ROW',
+      canonicalBestScoreKey: toFixedDedupeBestScoreKey_(resolution.canonical.BestScore)
+    };
     for (let c = 0; c < remainingRunRows.length; c++) {
       const row = remainingRunRows[c];
       if (row._rowNumber !== canonicalRowNumber) {
@@ -2603,19 +2688,67 @@ function autoCleanBenchmarkSearchSheetDuplicates_() {
   }
 
   const progressDeleteRows = [];
-  const seenProgressKeys = {};
+  const progressRowsByRunId = {};
+  const progressRunIdOrder = [];
   for (let p = 0; p < progressRows.length; p++) {
     const row = progressRows[p] || {};
     const runIdKey = normalizeBenchmarkTrialsRunIdForCompare_(row.RunId);
-    const scoreKey = toFixedDedupeBestScoreKey_(row.BestScore);
-    if (!runIdKey || !scoreKey) {
+    if (!runIdKey) {
       continue;
     }
-    const key = runIdKey + '|' + scoreKey;
-    if (seenProgressKeys[key]) {
-      progressDeleteRows.push(Number(row._rowNumber || 0));
-    } else {
-      seenProgressKeys[key] = true;
+    if (!Object.prototype.hasOwnProperty.call(progressRowsByRunId, runIdKey)) {
+      progressRowsByRunId[runIdKey] = [];
+      progressRunIdOrder.push(runIdKey);
+    }
+    progressRowsByRunId[runIdKey].push(row);
+  }
+
+  for (let i = 0; i < progressRunIdOrder.length; i++) {
+    const runIdKey = progressRunIdOrder[i];
+    const rows = progressRowsByRunId[runIdKey] || [];
+    if (rows.length <= 1) {
+      continue;
+    }
+
+    const plan = conflictProgressPlanByRunId[runIdKey] || null;
+    if (plan && plan.action === 'DELETE_ALL_PROGRESS_ROWS') {
+      for (let j = 0; j < rows.length; j++) {
+        progressDeleteRows.push(Number(rows[j]._rowNumber || 0));
+      }
+      continue;
+    }
+
+    if (plan && plan.action === 'KEEP_CANONICAL_PROGRESS_ROW') {
+      const canonicalBestScoreKey = plan.canonicalBestScoreKey || '';
+      let canonicalRowNumber = null;
+      for (let j = 0; j < rows.length; j++) {
+        if (toFixedDedupeBestScoreKey_(rows[j].BestScore) === canonicalBestScoreKey) {
+          canonicalRowNumber = Number(rows[j]._rowNumber || 0);
+          break;
+        }
+      }
+      if (canonicalRowNumber === null) {
+        canonicalRowNumber = Number(rows[0]._rowNumber || 0);
+      }
+      for (let j = 0; j < rows.length; j++) {
+        const rowNumber = Number(rows[j]._rowNumber || 0);
+        if (rowNumber !== canonicalRowNumber) {
+          progressDeleteRows.push(rowNumber);
+        }
+      }
+      continue;
+    }
+
+    const seenScoreKeys = {};
+    for (let j = 0; j < rows.length; j++) {
+      const row = rows[j];
+      const scoreKey = toFixedDedupeBestScoreKey_(row.BestScore);
+      const dedupeKey = runIdKey + '|' + scoreKey;
+      if (seenScoreKeys[dedupeKey]) {
+        progressDeleteRows.push(Number(row._rowNumber || 0));
+      } else {
+        seenScoreKeys[dedupeKey] = true;
+      }
     }
   }
 
@@ -2636,6 +2769,8 @@ function autoCleanBenchmarkSearchSheetDuplicates_() {
     exactDuplicateDeletionsCount: stats.exactDuplicateDeletionsCount,
     conflictDuplicateChecksCount: stats.conflictDuplicateChecksCount,
     conflictResolutionsPerformed: stats.conflictResolutionsPerformed,
+    conflictDeleteAllRunIdCount: stats.conflictDeleteAllRunIdCount,
+    conflictInconclusiveSkipCount: stats.conflictInconclusiveSkipCount,
     searchLogDeletedRowCount: deleteRowNumbers.length,
     searchProgressDeletedRowCount: progressDeleteRows.length
   };

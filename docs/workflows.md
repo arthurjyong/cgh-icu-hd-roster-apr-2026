@@ -9,7 +9,8 @@
 5. Winner is applied to `Sheet1` by writeback routines (default strategy: `FAST_ASC_VALIDATE` + `LEAN_OPERATIONAL` validation; scoped `SEARCH_LOG` rows are sorted by lowest `BestScore`, validated on-demand, and selection stops at first writeback-safe winner).
 6. Before winner selection, duplicate cleanup runs against `SEARCH_LOG` and `SEARCH_PROGRESS`:
    - exact duplicates (`RunId` + `BestScore` [+ same artifact fields]) are auto-deleted bottom-up;
-   - conflict duplicates (same `RunId` with differing key fields) are resolved via targeted Drive checks.
+   - conflict duplicates (same `RunId` with differing key fields) are resolved via targeted Drive checks (`SEARCH_PROGRESS` cleanup follows RunId-level canonical outcome).
+   - when Drive checks are inconclusive/transient for a conflict group, cleanup skips destructive pruning for that RunId.
 7. Operational default guardrails:
    - `maxAttempts=15` and `maxFailureSamples=5` (overrideable via options),
    - concise failure summaries include attempted `RunId` values and sampled reasons.

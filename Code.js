@@ -237,6 +237,8 @@ function summarizeBenchmarkUiActionResult_(result) {
       'exactDuplicateDeletionsCount',
       'conflictDuplicateChecksCount',
       'conflictResolutionsPerformed',
+      'conflictDeleteAllRunIdCount',
+      'conflictInconclusiveSkipCount',
       'searchLogDeletedRowCount',
       'searchProgressDeletedRowCount'
     ]);
