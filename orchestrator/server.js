@@ -308,57 +308,6 @@ function flattenStatusLikeObject(obj) {
   };
 }
 
-function parseIsoTimestampOrNull(value) {
-  if (typeof value !== 'string' || !value.trim()) {
-    return null;
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function maybeFinalizeRunningStatusFromTerminalCounts(summary, options) {
-  const source = summary && typeof summary === 'object' ? { ...summary } : null;
-  if (!source || String(source.status || '').toUpperCase() !== 'RUNNING') {
-    return { summary: source, finalized: false, reason: '' };
-  }
-
-  const completedRunCount = Number(source.completedRunCount);
-  const plannedRunCount = Number(source.plannedRunCount);
-  if (!Number.isInteger(completedRunCount) || !Number.isInteger(plannedRunCount) || plannedRunCount < 0) {
-    return { summary: source, finalized: false, reason: 'COUNTS_UNKNOWN' };
-  }
-  if (completedRunCount !== plannedRunCount) {
-    return { summary: source, finalized: false, reason: 'COUNTS_NOT_TERMINAL' };
-  }
-
-  const opts = options && typeof options === 'object' ? options : {};
-  const staleAfterMs = Number.isFinite(opts.staleAfterMs) && opts.staleAfterMs > 0
-    ? opts.staleAfterMs
-    : 15 * 60 * 1000;
-  const nowDate = opts.now instanceof Date ? opts.now : new Date();
-  const lastUpdatedDate = parseIsoTimestampOrNull(source.lastUpdated);
-  if (!lastUpdatedDate) {
-    return { summary: source, finalized: false, reason: 'NO_LAST_UPDATED' };
-  }
-  const ageMs = Math.max(0, nowDate.getTime() - lastUpdatedDate.getTime());
-  if (ageMs < staleAfterMs) {
-    return { summary: source, finalized: false, reason: 'NOT_STALE' };
-  }
-
-  const finalized = {
-    ...source,
-    status: 'COMPLETE',
-    completedAt: source.completedAt || source.lastUpdated || nowDate.toISOString(),
-    statusInference: 'FORCED_COMPLETE_FROM_TERMINAL_COUNTS',
-    statusInferenceAgeMinutes: ageMs / 60000
-  };
-  return {
-    summary: finalized,
-    finalized: true,
-    reason: 'TERMINAL_COUNTS_STALE_RUNNING'
-  };
-}
-
 function flattenStartResult(entry) {
   return flattenStatusLikeObject({
     contractVersion: 'benchmark_campaign_status_v1',
@@ -627,11 +576,7 @@ async function handleCampaignStatus(req, res, config) {
   const persistedStatus = readJsonFileIfExists(statusFilePath);
 
   if (persistedStatus && persistedStatus.campaignId === campaignId) {
-    let summary = flattenStatusLikeObject(persistedStatus);
-    const finalized = maybeFinalizeRunningStatusFromTerminalCounts(summary, { now: new Date() });
-    if (finalized.finalized && finalized.summary) {
-      summary = finalized.summary;
-    }
+    const summary = flattenStatusLikeObject(persistedStatus);
     applyStatusSummaryToEntry(entry, summary);
     sendJson(res, 200, summary);
     return;
