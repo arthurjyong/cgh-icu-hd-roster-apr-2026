@@ -2319,8 +2319,13 @@ function verifyCandidateBestScoreAgainstArtifact_(candidate, loadedArtifact) {
   };
 }
 
-function selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData, candidates) {
-  const sortedCandidates = candidates.slice().sort(compareBenchmarkTrialsWritebackCandidates_);
+function selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData, candidates, scopeContext) {
+  const scope = scopeContext && scopeContext.scope ? scopeContext.scope : {};
+  const resolvedScopeOptions = scopeContext && scopeContext.resolvedScopeOptions
+    ? scopeContext.resolvedScopeOptions
+    : {};
+  const scopedCandidates = Array.isArray(scope.scopedCandidates) ? scope.scopedCandidates : [];
+  const sortedCandidates = scopedCandidates.slice().sort(compareBenchmarkTrialsWritebackCandidates_);
   const failures = [];
 
   for (let i = 0; i < sortedCandidates.length; i++) {
@@ -2344,11 +2349,11 @@ function selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData,
         trialsSheetName: trialsData.sheetName,
         trialsDataRowCount: trialsData.rowCount,
         candidateCount: candidates.length,
-        comparisonGroupCount: null,
-        comparisonGroup: null,
-        requestedComparisonGroupKey: '',
-        scopeSelectionMode: 'BEST_SCORE_ASCENDING_VALIDATE_ON_DEMAND',
-        scopeSelectionSource: 'FAST_ASC_VALIDATE',
+        comparisonGroupCount: isFiniteNumberValue_(scope.groupCount) ? Number(scope.groupCount) : null,
+        comparisonGroup: scope.selectedGroup || null,
+        requestedComparisonGroupKey: resolvedScopeOptions.comparisonGroupKey || '',
+        scopeSelectionMode: scope.selectionMode || resolvedScopeOptions.scopeSelectionMode || 'AUTO_SINGLE_GROUP_ONLY',
+        scopeSelectionSource: resolvedScopeOptions.scopeSelectionSource || 'AUTO_SINGLE_GROUP_ONLY',
         campaignFolderName: trimmedStringOrBlank_(candidate.CampaignFolderName),
         selectionScopeDescription: 'FIRST_VALID_ASCENDING_BEST_SCORE',
         selectionStrategy: 'FAST_ASC_VALIDATE',
@@ -2383,17 +2388,21 @@ function selectBestBenchmarkTrialsWinnerForWriteback_(scopeOptions) {
     scopeOptions && scopeOptions.selectionStrategy
   );
   assertNoDuplicateBenchmarkTrialsRunIds_(candidates, 'valid writeback candidates');
+  const resolvedScopeOptions = resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions);
+  const scope = resolveBenchmarkTrialsWritebackScope_(candidates, resolvedScopeOptions);
 
   if (strategy === 'FAST_ASC_VALIDATE') {
-    return selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData, candidates);
+    return selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData, candidates, {
+      scope: scope,
+      resolvedScopeOptions: resolvedScopeOptions
+    });
   }
 
   const validatedCandidates = buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates);
-  const resolvedScopeOptions = resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions);
-  const scope = resolveBenchmarkTrialsWritebackScope_(validatedCandidates, resolvedScopeOptions);
+  const strictScope = resolveBenchmarkTrialsWritebackScope_(validatedCandidates, resolvedScopeOptions);
   // Automatic green-button writeback intentionally evaluates the entire scoped candidate set
   // (which may span multiple campaigns) after comparison-group scoping has been resolved.
-  const bestCandidate = pickBestBenchmarkTrialsWritebackCandidate_(scope.scopedCandidates);
+  const bestCandidate = pickBestBenchmarkTrialsWritebackCandidate_(strictScope.scopedCandidates);
   const loadedArtifact = bestCandidate._loadedArtifactForWriteback || loadAndValidateBenchmarkRunArtifactForWriteback_(bestCandidate);
 
   return {
@@ -2401,10 +2410,10 @@ function selectBestBenchmarkTrialsWinnerForWriteback_(scopeOptions) {
     trialsSheetName: trialsData.sheetName,
     trialsDataRowCount: trialsData.rowCount,
     candidateCount: candidates.length,
-    comparisonGroupCount: scope.groupCount,
-    comparisonGroup: scope.selectedGroup,
+    comparisonGroupCount: strictScope.groupCount,
+    comparisonGroup: strictScope.selectedGroup,
     requestedComparisonGroupKey: resolvedScopeOptions.comparisonGroupKey || '',
-    scopeSelectionMode: scope.selectionMode || resolvedScopeOptions.scopeSelectionMode || 'AUTO_SINGLE_GROUP_ONLY',
+    scopeSelectionMode: strictScope.selectionMode || resolvedScopeOptions.scopeSelectionMode || 'AUTO_SINGLE_GROUP_ONLY',
     scopeSelectionSource: resolvedScopeOptions.scopeSelectionSource || 'AUTO_SINGLE_GROUP_ONLY',
     campaignFolderName: trimmedStringOrBlank_(bestCandidate.CampaignFolderName),
     selectionScopeDescription: 'BEST_OF_ALL_SCOPED_VALID_ROWS',
