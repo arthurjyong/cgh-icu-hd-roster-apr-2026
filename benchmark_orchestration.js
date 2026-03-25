@@ -522,33 +522,30 @@ function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
     winnerSource = 'IMPORTED_REPORT_WINNER';
   }
 
-  try {
-    const inspected = debugInspectBestBenchmarkTrialsWinnerForWriteback();
-    if (!bestWinner) {
-      if (
-        inspected &&
-        inspected.ok === true &&
-        normalizeBenchmarkOrchestrationString_(inspected.campaignFolderName) === folderName
-      ) {
-        bestWinner = inspected;
-        winnerSource = 'SEARCH_LOG_WINNER_SCOPED_TO_ACTIVE_CAMPAIGN';
+  if (!bestWinner) {
+    try {
+      const scoped = findBenchmarkTrialsBestCandidateForCampaignFolder_(folderName);
+      if (scoped && scoped.ok === true) {
+        bestWinner = {
+          ok: true,
+          runId: scoped.runId || '',
+          bestScore: scoped.bestScore,
+          campaignFolderName: folderName,
+          matchedCandidateCount: scoped.matchedCandidateCount,
+          rowNumber: scoped.rowNumber
+        };
+        winnerSource = 'SEARCH_LOG_CAMPAIGN_SCOPED_MIN_BEST_SCORE';
       } else {
         bestWinner = {
           ok: false,
           skipped: true,
-          reason: 'SEARCH_LOG_WINNER_OUTSIDE_ACTIVE_CAMPAIGN',
-          message: inspected && inspected.ok === true
-            ? (
-              'Best SEARCH_LOG winner belongs to campaign "' +
-              normalizeBenchmarkOrchestrationString_(inspected.campaignFolderName) +
-              '", not active campaign "' + folderName + '".'
-            )
-            : (inspected && inspected.message ? inspected.message : 'Unable to inspect best SEARCH_LOG winner.')
+          reason: scoped && scoped.reason ? scoped.reason : 'NO_CAMPAIGN_WINNER_FOUND',
+          message: scoped && scoped.message
+            ? scoped.message
+            : 'No campaign-scoped winner found in SEARCH_LOG.'
         };
       }
-    }
-  } catch (err) {
-    if (!bestWinner) {
+    } catch (err) {
       bestWinner = { ok: false, message: String(err && err.message ? err.message : err) };
     }
   }
