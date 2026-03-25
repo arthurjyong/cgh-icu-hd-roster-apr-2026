@@ -199,6 +199,7 @@ function recomputeMonthlyCallPointsFromFinalRoster_() {
   const doctorNameToRow = {};
   const doctorTotals = {};
   const doctorNamesByRow = {};
+  const doctorRowsByName = {};
 
   for (let i = 0; i < doctorRowBlocks.length; i++) {
     const block = doctorRowBlocks[i];
@@ -218,6 +219,7 @@ function recomputeMonthlyCallPointsFromFinalRoster_() {
         );
       }
       doctorNameToRow[doctorName] = rowNumber;
+      doctorRowsByName[doctorName] = rowNumber;
       doctorNamesByRow[rowNumber] = doctorName;
       doctorTotals[doctorName] = 0;
     }
@@ -272,10 +274,23 @@ function recomputeMonthlyCallPointsFromFinalRoster_() {
     sheet.getRange(block.startRow, outputColumn, rowCount, 1).setValues(outputValues);
   }
 
+  const doctorPointTotals = Object.keys(doctorTotals)
+    .map(function(doctorName) {
+      return {
+        doctorName: doctorName,
+        rowNumber: doctorRowsByName[doctorName] || null,
+        totalCallPoints: doctorTotals[doctorName]
+      };
+    })
+    .sort(function(a, b) {
+      return (a.rowNumber || 0) - (b.rowNumber || 0);
+    });
+
   return {
     ok: true,
     updatedDoctorCount: Object.keys(doctorTotals).length,
-    outputColumn: "AE"
+    outputColumn: "AE",
+    doctorPointTotals: doctorPointTotals
   };
 }
 
