@@ -506,10 +506,48 @@ function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
   }
 
   let bestWinner = null;
-  try {
-    bestWinner = debugInspectBestBenchmarkTrialsWinnerForWriteback();
-  } catch (err) {
-    bestWinner = { ok: false, message: String(err && err.message ? err.message : err) };
+  let winnerSource = '';
+  const importedSummary = imported && imported.summary ? imported.summary : null;
+  const importedWinnerRunId = normalizeBenchmarkOrchestrationString_(importedSummary && importedSummary.winnerRunId);
+  const importedWinnerBestScore = importedSummary && importedSummary.winnerBestScore !== undefined
+    ? importedSummary.winnerBestScore
+    : null;
+  if (importedWinnerRunId) {
+    bestWinner = {
+      ok: true,
+      runId: importedWinnerRunId,
+      bestScore: importedWinnerBestScore,
+      campaignFolderName: folderName
+    };
+    winnerSource = 'IMPORTED_REPORT_WINNER';
+  }
+
+  if (!bestWinner) {
+    try {
+      const scoped = findBenchmarkTrialsBestCandidateForCampaignFolder_(folderName);
+      if (scoped && scoped.ok === true) {
+        bestWinner = {
+          ok: true,
+          runId: scoped.runId || '',
+          bestScore: scoped.bestScore,
+          campaignFolderName: folderName,
+          matchedCandidateCount: scoped.matchedCandidateCount,
+          rowNumber: scoped.rowNumber
+        };
+        winnerSource = 'SEARCH_LOG_CAMPAIGN_SCOPED_MIN_BEST_SCORE';
+      } else {
+        bestWinner = {
+          ok: false,
+          skipped: true,
+          reason: scoped && scoped.reason ? scoped.reason : 'NO_CAMPAIGN_WINNER_FOUND',
+          message: scoped && scoped.message
+            ? scoped.message
+            : 'No campaign-scoped winner found in SEARCH_LOG.'
+        };
+      }
+    } catch (err) {
+      bestWinner = { ok: false, message: String(err && err.message ? err.message : err) };
+    }
   }
 
   if (bestWinner && bestWinner.ok === true) {
@@ -524,6 +562,7 @@ function refreshBenchmarkTablesFromCampaignFolder_(campaignFolderName) {
   return {
     ok: true,
     campaignFolderName: folderName,
+    winnerSource: winnerSource,
     bestWinner: bestWinner,
     loaded: imported && imported.loaded ? imported.loaded : null,
     summary: imported && imported.summary ? imported.summary : null,

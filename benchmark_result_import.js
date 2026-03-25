@@ -1713,6 +1713,59 @@ function buildBenchmarkTrialsWritebackCandidates_(rowObjects) {
   return candidates;
 }
 
+function findBenchmarkTrialsBestCandidateForCampaignFolder_(campaignFolderName) {
+  const folderName = trimmedStringOrBlank_(campaignFolderName);
+  if (!folderName) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'CAMPAIGN_FOLDER_REQUIRED',
+      message: 'campaignFolderName is required.'
+    };
+  }
+
+  const trialsData = readBenchmarkTrialsRowsAsObjects_();
+  const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
+  let best = null;
+  let matchedCount = 0;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    if (trimmedStringOrBlank_(candidate.CampaignFolderName) !== folderName) {
+      continue;
+    }
+    matchedCount += 1;
+    if (!best || compareBenchmarkTrialsWritebackCandidates_(candidate, best) < 0) {
+      best = candidate;
+    }
+  }
+
+  if (!best) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'NO_VALID_CANDIDATES_IN_CAMPAIGN',
+      message: 'No valid SEARCH_LOG candidates found for campaign "' + folderName + '".',
+      campaignFolderName: folderName,
+      trialsSheetName: trialsData.sheetName,
+      trialsDataRowCount: trialsData.rowCount,
+      matchedCandidateCount: 0
+    };
+  }
+
+  return {
+    ok: true,
+    campaignFolderName: folderName,
+    trialsSheetName: trialsData.sheetName,
+    trialsDataRowCount: trialsData.rowCount,
+    matchedCandidateCount: matchedCount,
+    runId: trimmedStringOrBlank_(best.RunId),
+    bestScore: numericValueOrNull_(best.BestScore),
+    rowNumber: Number(best._rowNumber || 0),
+    candidateRow: best
+  };
+}
+
 function resolveSingleCampaignFolderInTrialsSheet_(candidates) {
   const unique = {};
   const ordered = [];
