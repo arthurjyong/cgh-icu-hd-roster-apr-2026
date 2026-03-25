@@ -3,7 +3,7 @@ function getBenchmarkOrchestrationDefaults_() {
     startPath: '/campaigns/start',
     statusPath: '/campaigns/status',
     artifactFileName: 'benchmark_campaign_report_v1.json',
-    pollEveryMinutes: 1,
+    pollEveryMinutes: 10,
     repeats: 1,
     statePrefix: 'BENCHMARK_ORCHESTRATION_',
     activeStatusValues: {
