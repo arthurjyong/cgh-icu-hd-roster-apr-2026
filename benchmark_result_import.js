@@ -2266,6 +2266,14 @@ function resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions) {
   };
 }
 
+function normalizeBenchmarkTrialsWritebackSelectionStrategy_(value) {
+  const normalized = trimmedStringOrBlank_(value).toUpperCase();
+  if (normalized === 'STRICT_FULL_SCAN') {
+    return 'STRICT_FULL_SCAN';
+  }
+  return 'FAST_ASC_VALIDATE';
+}
+
 function buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates) {
   const rows = Array.isArray(candidates) ? candidates : [];
 
@@ -2284,10 +2292,102 @@ function buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candid
   });
 }
 
+function verifyCandidateBestScoreAgainstArtifact_(candidate, loadedArtifact) {
+  const rowScore = numericValueOrNull_(candidate && candidate.BestScore);
+  const transportResult = loadedArtifact && loadedArtifact.transportResult ? loadedArtifact.transportResult : {};
+  const bestTrial = transportResult && transportResult.bestTrial ? transportResult.bestTrial : {};
+  const artifactScore = numericValueOrNull_(bestTrial.score);
+
+  if (rowScore === null || artifactScore === null) {
+    return {
+      ok: false,
+      message: 'BestScore verification failed due to non-finite row/artifact score values.'
+    };
+  }
+
+  if (!numericValuesApproximatelyEqual_(rowScore, artifactScore)) {
+    return {
+      ok: false,
+      message: 'Selected BENCHMARK_TRIALS BestScore does not match transport bestTrial.score. row=' + rowScore + ' artifact=' + artifactScore + '.'
+    };
+  }
+
+  return {
+    ok: true,
+    rowScore: rowScore,
+    artifactScore: artifactScore
+  };
+}
+
+function selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData, candidates) {
+  const sortedCandidates = candidates.slice().sort(compareBenchmarkTrialsWritebackCandidates_);
+  const failures = [];
+
+  for (let i = 0; i < sortedCandidates.length; i++) {
+    const candidate = sortedCandidates[i];
+
+    try {
+      const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWriteback_(candidate);
+      const scoreVerification = verifyCandidateBestScoreAgainstArtifact_(candidate, loadedArtifact);
+      if (scoreVerification.ok !== true) {
+        failures.push({
+          rowNumber: candidate._rowNumber || null,
+          runId: trimmedStringOrBlank_(candidate.RunId),
+          reason: scoreVerification.message || 'BestScore verification failed.'
+        });
+        continue;
+      }
+
+      candidate._loadedArtifactForWriteback = loadedArtifact;
+      return {
+        ok: true,
+        trialsSheetName: trialsData.sheetName,
+        trialsDataRowCount: trialsData.rowCount,
+        candidateCount: candidates.length,
+        comparisonGroupCount: null,
+        comparisonGroup: null,
+        requestedComparisonGroupKey: '',
+        scopeSelectionMode: 'BEST_SCORE_ASCENDING_VALIDATE_ON_DEMAND',
+        scopeSelectionSource: 'FAST_ASC_VALIDATE',
+        campaignFolderName: trimmedStringOrBlank_(candidate.CampaignFolderName),
+        selectionScopeDescription: 'FIRST_VALID_ASCENDING_BEST_SCORE',
+        selectionStrategy: 'FAST_ASC_VALIDATE',
+        attemptedCandidateCount: i + 1,
+        candidateRow: candidate,
+        loadedArtifact: loadedArtifact,
+        transportResult: loadedArtifact.transportResult
+      };
+    } catch (err) {
+      failures.push({
+        rowNumber: candidate._rowNumber || null,
+        runId: trimmedStringOrBlank_(candidate.RunId),
+        reason: String(err && err.message ? err.message : err)
+      });
+    }
+  }
+
+  throw new Error(
+    'FAST_ASC_VALIDATE failed to find a writeback-safe winner after checking ' +
+    sortedCandidates.length +
+    ' candidate(s). Sample failures: ' +
+    failures.slice(0, 3).map(function(entry) {
+      return 'row ' + entry.rowNumber + ' runId "' + entry.runId + '" -> ' + entry.reason;
+    }).join(' | ')
+  );
+}
+
 function selectBestBenchmarkTrialsWinnerForWriteback_(scopeOptions) {
   const trialsData = readBenchmarkTrialsRowsAsObjects_();
   const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
+  const strategy = normalizeBenchmarkTrialsWritebackSelectionStrategy_(
+    scopeOptions && scopeOptions.selectionStrategy
+  );
   assertNoDuplicateBenchmarkTrialsRunIds_(candidates, 'valid writeback candidates');
+
+  if (strategy === 'FAST_ASC_VALIDATE') {
+    return selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData, candidates);
+  }
+
   const validatedCandidates = buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates);
   const resolvedScopeOptions = resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions);
   const scope = resolveBenchmarkTrialsWritebackScope_(validatedCandidates, resolvedScopeOptions);
@@ -2308,6 +2408,7 @@ function selectBestBenchmarkTrialsWinnerForWriteback_(scopeOptions) {
     scopeSelectionSource: resolvedScopeOptions.scopeSelectionSource || 'AUTO_SINGLE_GROUP_ONLY',
     campaignFolderName: trimmedStringOrBlank_(bestCandidate.CampaignFolderName),
     selectionScopeDescription: 'BEST_OF_ALL_SCOPED_VALID_ROWS',
+    selectionStrategy: 'STRICT_FULL_SCAN',
     candidateRow: bestCandidate,
     loadedArtifact: loadedArtifact,
     transportResult: loadedArtifact.transportResult

@@ -6,7 +6,7 @@
 2. Benchmark controls are initialized/read on `SCORER_CONFIG`.
 3. Benchmark results are imported into sheet tables (`SEARCH_LOG`, `SEARCH_PROGRESS`).
 4. Winner is inspected via benchmark helper functions.
-5. Winner is applied to `Sheet1` by writeback routines.
+5. Winner is applied to `Sheet1` by writeback routines (default strategy: `FAST_ASC_VALIDATE`, i.e. sort valid `SEARCH_LOG` rows by lowest `BestScore`, validate-on-demand, and stop at first writeback-safe winner).
 
 Common entrypoints:
 - `initializeBenchmarkControlPanel`
