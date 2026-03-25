@@ -206,7 +206,9 @@ function summarizeBenchmarkUiActionResult_(result) {
     'bestScore',
     'invocationMode',
     'runFolderName',
-    'summaryRowCount'
+    'summaryRowCount',
+    'maxAttempts',
+    'attemptedCandidateCount'
   ]);
 
   if (result.summary && typeof result.summary === 'object') {
@@ -226,6 +228,25 @@ function summarizeBenchmarkUiActionResult_(result) {
       'winnerTrialCount',
       'winnerRepeatIndex',
       'winnerBestScore'
+    ]);
+  }
+
+  if (result.dedupeSummary && typeof result.dedupeSummary === 'object') {
+    summary.dedupeSummary = {};
+    copyDefinedBenchmarkUiFields_(result.dedupeSummary, summary.dedupeSummary, [
+      'exactDuplicateDeletionsCount',
+      'conflictDuplicateChecksCount',
+      'conflictResolutionsPerformed',
+      'searchLogDeletedRowCount',
+      'searchProgressDeletedRowCount'
+    ]);
+  }
+
+  if (result.failureSummary && typeof result.failureSummary === 'object') {
+    summary.failureSummary = {};
+    copyDefinedBenchmarkUiFields_(result.failureSummary, summary.failureSummary, [
+      'attemptedRunIds',
+      'failureSamples'
     ]);
   }
 

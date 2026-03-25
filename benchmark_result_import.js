@@ -1542,6 +1542,52 @@ function readBenchmarkTrialsRowsAsObjects_() {
   };
 }
 
+function readBenchmarkReviewRowsAsObjects_() {
+  const sheet = ensureBenchmarkReviewSheet_();
+  const expectedHeader = getBenchmarkReviewHeader_();
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow <= 1) {
+    return {
+      ok: true,
+      sheetName: sheet.getName(),
+      rowCount: 0,
+      rows: []
+    };
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, expectedHeader.length).getValues();
+  const rows = [];
+
+  for (let i = 0; i < values.length; i++) {
+    const sourceRow = values[i];
+    const rowObject = {
+      _rowNumber: i + 2
+    };
+    let hasAnyValue = false;
+
+    for (let j = 0; j < expectedHeader.length; j++) {
+      const headerKey = expectedHeader[j];
+      const cellValue = normalizeBenchmarkTrialsRowObjectCell_(sourceRow[j]);
+      rowObject[headerKey] = cellValue;
+      if (cellValue !== "") {
+        hasAnyValue = true;
+      }
+    }
+
+    if (hasAnyValue) {
+      rows.push(rowObject);
+    }
+  }
+
+  return {
+    ok: true,
+    sheetName: sheet.getName(),
+    rowCount: rows.length,
+    rows: rows
+  };
+}
+
 function normalizeBenchmarkTrialsBoolean_(value) {
   if (value === true || value === false) {
     return value;
@@ -1778,6 +1824,7 @@ function formatBenchmarkTrialsWritebackComparisonGroupForError_(group) {
 function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
   const rows = Array.isArray(candidates) ? candidates : [];
   const options = scopeOptions || {};
+  const enforceStrictComparisonGroup = options.enforceStrictComparisonGroup !== false;
   const requestedComparisonGroupKey = trimmedStringOrBlank_(options.comparisonGroupKey);
   const scopeSelectionSource = trimmedStringOrBlank_(options.scopeSelectionSource);
   const isUiDefaultScope =
@@ -1845,7 +1892,7 @@ function resolveBenchmarkTrialsWritebackScope_(candidates, scopeOptions) {
     selectedGroup = groups[0];
   }
 
-  if (!selectedGroup || selectedGroup.comparisonStatus !== "STRICT") {
+  if (enforceStrictComparisonGroup !== false && (!selectedGroup || selectedGroup.comparisonStatus !== "STRICT")) {
     throw new Error(
       "Default benchmark winner writeback is blocked because the selected comparison group is not valid for automatic selection. " +
       "Automatic writeback requires complete comparable metadata (SnapshotFileSha256 + ScorerFingerprint) on all candidate rows. " +
@@ -1938,28 +1985,78 @@ function findSingleFileByNameOrThrow_(parentFolder, fileName, contextLabel) {
   return matches[0];
 }
 
-function resolveBenchmarkRunArtifactFromTrialsRow_(rowObject) {
-  const benchmarkRunsFolder = getPhase12BenchmarkRunsFolder_();
-  const campaignFolder = findSingleChildFolderByNameOrThrow_(
-    benchmarkRunsFolder,
-    rowObject.CampaignFolderName,
-    'benchmark_runs'
-  );
-  const runsFolder = findSingleChildFolderByNameOrThrow_(
-    campaignFolder,
-    'runs',
-    'campaign folder "' + campaignFolder.getName() + '"'
-  );
-  const runFolder = findSingleChildFolderByNameOrThrow_(
-    runsFolder,
-    rowObject.RunFolderName,
-    'campaign folder "' + campaignFolder.getName() + '" runs/'
-  );
-  const artifactFile = findSingleFileByNameOrThrow_(
-    runFolder,
-    rowObject.ArtifactFileName,
-    'run folder "' + runFolder.getName() + '"'
-  );
+function resolveBenchmarkRunArtifactFromTrialsRow_(rowObject, resolverOptions) {
+  const options = resolverOptions || {};
+  const cache = options.cache || null;
+  const benchmarkRunsFolder = cache && cache.benchmarkRunsFolder
+    ? cache.benchmarkRunsFolder
+    : getPhase12BenchmarkRunsFolder_();
+  if (cache && !cache.benchmarkRunsFolder) {
+    cache.benchmarkRunsFolder = benchmarkRunsFolder;
+  }
+
+  const campaignFolderName = trimmedStringOrBlank_(rowObject && rowObject.CampaignFolderName);
+  const runFolderName = trimmedStringOrBlank_(rowObject && rowObject.RunFolderName);
+  const artifactFileName = trimmedStringOrBlank_(rowObject && rowObject.ArtifactFileName);
+  const campaignCacheKey = campaignFolderName.toLowerCase();
+  const runFolderCacheKey = campaignCacheKey + '|runs|' + runFolderName.toLowerCase();
+  const artifactCacheKey = runFolderCacheKey + '|artifact|' + artifactFileName.toLowerCase();
+
+  let campaignFolder = cache && cache.campaignFolders && Object.prototype.hasOwnProperty.call(cache.campaignFolders, campaignCacheKey)
+    ? cache.campaignFolders[campaignCacheKey]
+    : null;
+  if (!campaignFolder) {
+    campaignFolder = findSingleChildFolderByNameOrThrow_(
+      benchmarkRunsFolder,
+      campaignFolderName,
+      'benchmark_runs'
+    );
+    if (cache && cache.campaignFolders) {
+      cache.campaignFolders[campaignCacheKey] = campaignFolder;
+    }
+  }
+
+  let runsFolder = cache && cache.runsFolders && Object.prototype.hasOwnProperty.call(cache.runsFolders, campaignCacheKey)
+    ? cache.runsFolders[campaignCacheKey]
+    : null;
+  if (!runsFolder) {
+    runsFolder = findSingleChildFolderByNameOrThrow_(
+      campaignFolder,
+      'runs',
+      'campaign folder "' + campaignFolder.getName() + '"'
+    );
+    if (cache && cache.runsFolders) {
+      cache.runsFolders[campaignCacheKey] = runsFolder;
+    }
+  }
+
+  let runFolder = cache && cache.runFolders && Object.prototype.hasOwnProperty.call(cache.runFolders, runFolderCacheKey)
+    ? cache.runFolders[runFolderCacheKey]
+    : null;
+  if (!runFolder) {
+    runFolder = findSingleChildFolderByNameOrThrow_(
+      runsFolder,
+      runFolderName,
+      'campaign folder "' + campaignFolder.getName() + '" runs/'
+    );
+    if (cache && cache.runFolders) {
+      cache.runFolders[runFolderCacheKey] = runFolder;
+    }
+  }
+
+  let artifactFile = cache && cache.artifactFiles && Object.prototype.hasOwnProperty.call(cache.artifactFiles, artifactCacheKey)
+    ? cache.artifactFiles[artifactCacheKey]
+    : null;
+  if (!artifactFile) {
+    artifactFile = findSingleFileByNameOrThrow_(
+      runFolder,
+      artifactFileName,
+      'run folder "' + runFolder.getName() + '"'
+    );
+    if (cache && cache.artifactFiles) {
+      cache.artifactFiles[artifactCacheKey] = artifactFile;
+    }
+  }
 
   return {
     benchmarkRunsFolderId: benchmarkRunsFolder.getId(),
@@ -2184,8 +2281,36 @@ function normalizeBenchmarkInvocationModeForComparison_(value) {
   };
 }
 
-function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
-  const resolvedArtifact = resolveBenchmarkRunArtifactFromTrialsRow_(rowObject);
+function createBenchmarkWritebackDriveResolverCache_() {
+  return {
+    benchmarkRunsFolder: null,
+    campaignFolders: {},
+    runsFolders: {},
+    runFolders: {},
+    artifactFiles: {}
+  };
+}
+
+function normalizeBenchmarkWritebackValidationMode_(value, selectionStrategy) {
+  const strategy = normalizeBenchmarkTrialsWritebackSelectionStrategy_(selectionStrategy);
+  const normalized = trimmedStringOrBlank_(value).toUpperCase();
+
+  if (normalized === 'STRICT_AUDIT' || strategy === 'STRICT_FULL_SCAN') {
+    return 'STRICT_AUDIT';
+  }
+
+  return 'LEAN_OPERATIONAL';
+}
+
+function loadAndValidateBenchmarkRunArtifactForWritebackWithMode_(rowObject, loadOptions) {
+  const options = loadOptions || {};
+  const validationMode = normalizeBenchmarkWritebackValidationMode_(
+    options.validationMode,
+    options.selectionStrategy
+  );
+  const resolvedArtifact = resolveBenchmarkRunArtifactFromTrialsRow_(rowObject, {
+    cache: options.resolverCache || null
+  });
   const transportResult = readJsonDriveFileOrThrow_(
     resolvedArtifact.artifactFile,
     resolvedArtifact.campaignFolderName + '/runs/' + resolvedArtifact.runFolderName + '/' + resolvedArtifact.artifactFileName
@@ -2199,6 +2324,29 @@ function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
   const writebackValidation = validateTransportTrialResultForWriteback_(transportResult);
   if (writebackValidation.ok !== true) {
     throw new Error(writebackValidation.message || "Resolved benchmark run artifact is not writeback-safe.");
+  }
+
+  const rowArtifactValidation = validateBenchmarkTrialsRowAgainstTransportResult_(
+    rowObject,
+    transportResult,
+    resolvedArtifact
+  );
+  if (rowArtifactValidation.ok !== true) {
+    throw new Error(rowArtifactValidation.message || "BENCHMARK_TRIALS row does not match resolved artifact.");
+  }
+
+  if (validationMode !== 'STRICT_AUDIT') {
+    return {
+      resolvedArtifact: resolvedArtifact,
+      manifestInfo: null,
+      comparisonMetadata: null,
+      transportValidation: transportValidation,
+      writebackValidation: writebackValidation,
+      comparisonMetadataValidation: null,
+      rowArtifactValidation: rowArtifactValidation,
+      transportResult: transportResult,
+      validationMode: validationMode
+    };
   }
 
   const manifestInfo = loadBenchmarkRunManifestFromResolvedArtifact_(resolvedArtifact);
@@ -2217,15 +2365,6 @@ function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
     );
   }
 
-  const rowArtifactValidation = validateBenchmarkTrialsRowAgainstTransportResult_(
-    rowObject,
-    transportResult,
-    resolvedArtifact
-  );
-  if (rowArtifactValidation.ok !== true) {
-    throw new Error(rowArtifactValidation.message || "BENCHMARK_TRIALS row does not match resolved artifact.");
-  }
-
   return {
     resolvedArtifact: resolvedArtifact,
     manifestInfo: manifestInfo,
@@ -2234,8 +2373,16 @@ function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
     writebackValidation: writebackValidation,
     comparisonMetadataValidation: comparisonMetadataValidation,
     rowArtifactValidation: rowArtifactValidation,
-    transportResult: transportResult
+    transportResult: transportResult,
+    validationMode: validationMode
   };
+}
+
+function loadAndValidateBenchmarkRunArtifactForWriteback_(rowObject) {
+  return loadAndValidateBenchmarkRunArtifactForWritebackWithMode_(rowObject, {
+    validationMode: 'STRICT_AUDIT',
+    selectionStrategy: 'STRICT_FULL_SCAN'
+  });
 }
 
 function resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions) {
@@ -2274,11 +2421,234 @@ function normalizeBenchmarkTrialsWritebackSelectionStrategy_(value) {
   return 'FAST_ASC_VALIDATE';
 }
 
+function getBenchmarkTrialsWritebackOperationalDefaults_() {
+  return {
+    maxAttempts: 15,
+    maxFailureSamples: 5
+  };
+}
+
+function normalizePositiveIntegerOption_(value, fallbackValue) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.floor(parsed);
+  }
+  return fallbackValue;
+}
+
+function normalizeBenchmarkTrialsWritebackExecutionOptions_(scopeOptions, strategy) {
+  const defaults = getBenchmarkTrialsWritebackOperationalDefaults_();
+  const options = scopeOptions || {};
+  const normalizedStrategy = normalizeBenchmarkTrialsWritebackSelectionStrategy_(strategy || options.selectionStrategy);
+
+  return {
+    selectionStrategy: normalizedStrategy,
+    validationMode: normalizeBenchmarkWritebackValidationMode_(options.validationMode, normalizedStrategy),
+    maxAttempts: normalizePositiveIntegerOption_(options.maxAttempts, defaults.maxAttempts),
+    maxFailureSamples: normalizePositiveIntegerOption_(options.maxFailureSamples, defaults.maxFailureSamples)
+  };
+}
+
+function toFixedDedupeBestScoreKey_(value) {
+  const numeric = numericValueOrNull_(value);
+  if (numeric === null) {
+    return '';
+  }
+  return Number(numeric).toFixed(9);
+}
+
+function buildSearchSheetDuplicateGroups_(sheetRows) {
+  const rows = Array.isArray(sheetRows) ? sheetRows : [];
+  const exactGroups = {};
+  const runIdGroups = {};
+  const exactOrder = [];
+  const runIdOrder = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || {};
+    const runIdKey = normalizeBenchmarkTrialsRunIdForCompare_(row.RunId);
+    if (!runIdKey) {
+      continue;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(runIdGroups, runIdKey)) {
+      runIdGroups[runIdKey] = [];
+      runIdOrder.push(runIdKey);
+    }
+    runIdGroups[runIdKey].push(row);
+
+    const scoreKey = toFixedDedupeBestScoreKey_(row.BestScore);
+    if (!scoreKey) {
+      continue;
+    }
+
+    const runFolder = trimmedStringOrBlank_(row.RunFolderName).toLowerCase();
+    const artifactFile = trimmedStringOrBlank_(row.ArtifactFileName).toLowerCase();
+    const exactKey = runIdKey + '|' + scoreKey + '|' + runFolder + '|' + artifactFile;
+    if (!Object.prototype.hasOwnProperty.call(exactGroups, exactKey)) {
+      exactGroups[exactKey] = [];
+      exactOrder.push(exactKey);
+    }
+    exactGroups[exactKey].push(row);
+  }
+
+  return {
+    exactOrder: exactOrder,
+    exactGroups: exactGroups,
+    runIdOrder: runIdOrder,
+    runIdGroups: runIdGroups
+  };
+}
+
+function chooseCanonicalConflictDuplicateRow_(rows, resolverCache, executionOptions) {
+  const candidates = Array.isArray(rows) ? rows : [];
+  const failures = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    try {
+      const loaded = loadAndValidateBenchmarkRunArtifactForWritebackWithMode_(candidate, {
+        validationMode: 'LEAN_OPERATIONAL',
+        selectionStrategy: executionOptions.selectionStrategy,
+        resolverCache: resolverCache
+      });
+      return {
+        canonical: candidate,
+        loadedArtifact: loaded,
+        failures: failures
+      };
+    } catch (err) {
+      failures.push({
+        rowNumber: candidate._rowNumber || null,
+        runId: trimmedStringOrBlank_(candidate.RunId),
+        reason: String(err && err.message ? err.message : err)
+      });
+    }
+  }
+
+  return {
+    canonical: candidates[0] || null,
+    loadedArtifact: null,
+    failures: failures
+  };
+}
+
+function autoCleanBenchmarkSearchSheetDuplicates_() {
+  const trialsData = readBenchmarkTrialsRowsAsObjects_();
+  const progressData = readBenchmarkReviewRowsAsObjects_();
+  const executionOptions = normalizeBenchmarkTrialsWritebackExecutionOptions_({}, 'FAST_ASC_VALIDATE');
+  const resolverCache = createBenchmarkWritebackDriveResolverCache_();
+
+  const trialsRows = Array.isArray(trialsData.rows) ? trialsData.rows : [];
+  const progressRows = Array.isArray(progressData.rows) ? progressData.rows : [];
+  const grouped = buildSearchSheetDuplicateGroups_(trialsRows);
+  const deleteRowNumbersMap = {};
+  const stats = {
+    exactDuplicateDeletionsCount: 0,
+    conflictDuplicateChecksCount: 0,
+    conflictResolutionsPerformed: 0
+  };
+
+  for (let i = 0; i < grouped.exactOrder.length; i++) {
+    const key = grouped.exactOrder[i];
+    const rows = grouped.exactGroups[key] || [];
+    if (rows.length <= 1) {
+      continue;
+    }
+    for (let j = 1; j < rows.length; j++) {
+      deleteRowNumbersMap[rows[j]._rowNumber] = true;
+      stats.exactDuplicateDeletionsCount += 1;
+    }
+  }
+
+  for (let r = 0; r < grouped.runIdOrder.length; r++) {
+    const runIdKey = grouped.runIdOrder[r];
+    const runRowsAll = grouped.runIdGroups[runIdKey] || [];
+    const remainingRunRows = runRowsAll.filter(function(row) {
+      return !deleteRowNumbersMap[row._rowNumber];
+    });
+    if (remainingRunRows.length <= 1) {
+      continue;
+    }
+
+    stats.conflictDuplicateChecksCount += 1;
+    const resolution = chooseCanonicalConflictDuplicateRow_(
+      remainingRunRows,
+      resolverCache,
+      executionOptions
+    );
+    const canonicalRowNumber = resolution && resolution.canonical ? resolution.canonical._rowNumber : null;
+    for (let c = 0; c < remainingRunRows.length; c++) {
+      const row = remainingRunRows[c];
+      if (row._rowNumber !== canonicalRowNumber) {
+        deleteRowNumbersMap[row._rowNumber] = true;
+        stats.conflictResolutionsPerformed += 1;
+      }
+    }
+  }
+
+  const deleteRowNumbers = Object.keys(deleteRowNumbersMap).map(function(value) {
+    return Number(value);
+  }).filter(function(value) {
+    return Number.isFinite(value) && value >= 2;
+  }).sort(function(left, right) {
+    return right - left;
+  });
+
+  if (deleteRowNumbers.length > 0) {
+    const sheet = ensureBenchmarkTrialsSheet_();
+    for (let d = 0; d < deleteRowNumbers.length; d++) {
+      sheet.deleteRow(deleteRowNumbers[d]);
+    }
+  }
+
+  const progressDeleteRows = [];
+  const seenProgressKeys = {};
+  for (let p = 0; p < progressRows.length; p++) {
+    const row = progressRows[p] || {};
+    const runIdKey = normalizeBenchmarkTrialsRunIdForCompare_(row.RunId);
+    const scoreKey = toFixedDedupeBestScoreKey_(row.BestScore);
+    if (!runIdKey || !scoreKey) {
+      continue;
+    }
+    const key = runIdKey + '|' + scoreKey;
+    if (seenProgressKeys[key]) {
+      progressDeleteRows.push(Number(row._rowNumber || 0));
+    } else {
+      seenProgressKeys[key] = true;
+    }
+  }
+
+  if (progressDeleteRows.length > 0) {
+    const progressSheet = ensureBenchmarkReviewSheet_();
+    progressDeleteRows.sort(function(left, right) {
+      return right - left;
+    });
+    for (let x = 0; x < progressDeleteRows.length; x++) {
+      if (progressDeleteRows[x] >= 2) {
+        progressSheet.deleteRow(progressDeleteRows[x]);
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    exactDuplicateDeletionsCount: stats.exactDuplicateDeletionsCount,
+    conflictDuplicateChecksCount: stats.conflictDuplicateChecksCount,
+    conflictResolutionsPerformed: stats.conflictResolutionsPerformed,
+    searchLogDeletedRowCount: deleteRowNumbers.length,
+    searchProgressDeletedRowCount: progressDeleteRows.length
+  };
+}
+
 function buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates) {
   const rows = Array.isArray(candidates) ? candidates : [];
 
   return rows.map(function(candidate) {
-    const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWriteback_(candidate);
+    const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWritebackWithMode_(candidate, {
+      validationMode: 'STRICT_AUDIT',
+      selectionStrategy: 'STRICT_FULL_SCAN'
+    });
     const comparisonMetadata = loadedArtifact && loadedArtifact.comparisonMetadata
       ? loadedArtifact.comparisonMetadata
       : {};
@@ -2324,15 +2694,26 @@ function selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData,
   const resolvedScopeOptions = scopeContext && scopeContext.resolvedScopeOptions
     ? scopeContext.resolvedScopeOptions
     : {};
+  const executionOptions = scopeContext && scopeContext.executionOptions
+    ? scopeContext.executionOptions
+    : normalizeBenchmarkTrialsWritebackExecutionOptions_({}, 'FAST_ASC_VALIDATE');
   const scopedCandidates = Array.isArray(scope.scopedCandidates) ? scope.scopedCandidates : [];
   const sortedCandidates = scopedCandidates.slice().sort(compareBenchmarkTrialsWritebackCandidates_);
   const failures = [];
+  const maxAttempts = Math.min(sortedCandidates.length, executionOptions.maxAttempts);
+  const resolverCache = scopeContext && scopeContext.resolverCache
+    ? scopeContext.resolverCache
+    : createBenchmarkWritebackDriveResolverCache_();
 
-  for (let i = 0; i < sortedCandidates.length; i++) {
+  for (let i = 0; i < maxAttempts; i++) {
     const candidate = sortedCandidates[i];
 
     try {
-      const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWriteback_(candidate);
+      const loadedArtifact = loadAndValidateBenchmarkRunArtifactForWritebackWithMode_(candidate, {
+        validationMode: executionOptions.validationMode,
+        selectionStrategy: executionOptions.selectionStrategy,
+        resolverCache: resolverCache
+      });
       const scoreVerification = verifyCandidateBestScoreAgainstArtifact_(candidate, loadedArtifact);
       if (scoreVerification.ok !== true) {
         failures.push({
@@ -2358,9 +2739,14 @@ function selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData,
         selectionScopeDescription: 'FIRST_VALID_ASCENDING_BEST_SCORE',
         selectionStrategy: 'FAST_ASC_VALIDATE',
         attemptedCandidateCount: i + 1,
+        maxAttempts: executionOptions.maxAttempts,
         candidateRow: candidate,
         loadedArtifact: loadedArtifact,
-        transportResult: loadedArtifact.transportResult
+        transportResult: loadedArtifact.transportResult,
+        failureSummary: {
+          attemptedRunIds: failures.map(function(entry) { return entry.runId; }),
+          failureSamples: failures.slice(0, executionOptions.maxFailureSamples)
+        }
       };
     } catch (err) {
       failures.push({
@@ -2373,37 +2759,57 @@ function selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData,
 
   throw new Error(
     'FAST_ASC_VALIDATE failed to find a writeback-safe winner after checking ' +
+    maxAttempts +
+    ' of ' +
     sortedCandidates.length +
     ' candidate(s). Sample failures: ' +
-    failures.slice(0, 3).map(function(entry) {
+    failures.slice(0, executionOptions.maxFailureSamples).map(function(entry) {
       return 'row ' + entry.rowNumber + ' runId "' + entry.runId + '" -> ' + entry.reason;
     }).join(' | ')
   );
 }
 
 function selectBestBenchmarkTrialsWinnerForWriteback_(scopeOptions) {
-  const trialsData = readBenchmarkTrialsRowsAsObjects_();
-  const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
   const strategy = normalizeBenchmarkTrialsWritebackSelectionStrategy_(
     scopeOptions && scopeOptions.selectionStrategy
   );
-  assertNoDuplicateBenchmarkTrialsRunIds_(candidates, 'valid writeback candidates');
+  const executionOptions = normalizeBenchmarkTrialsWritebackExecutionOptions_(scopeOptions, strategy);
+  const dedupeSummary = autoCleanBenchmarkSearchSheetDuplicates_();
+  const trialsData = readBenchmarkTrialsRowsAsObjects_();
+  const candidates = buildBenchmarkTrialsWritebackCandidates_(trialsData.rows);
   const resolvedScopeOptions = resolveBenchmarkTrialsDefaultWritebackScopeOptions_(scopeOptions);
-  const scope = resolveBenchmarkTrialsWritebackScope_(candidates, resolvedScopeOptions);
+  const scope = resolveBenchmarkTrialsWritebackScope_(candidates, {
+    comparisonGroupKey: resolvedScopeOptions.comparisonGroupKey,
+    scopeSelectionSource: resolvedScopeOptions.scopeSelectionSource,
+    enforceStrictComparisonGroup: strategy === 'STRICT_FULL_SCAN'
+  });
+  const resolverCache = createBenchmarkWritebackDriveResolverCache_();
 
   if (strategy === 'FAST_ASC_VALIDATE') {
-    return selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData, candidates, {
+    const fastSelection = selectBestBenchmarkTrialsWinnerForWritebackFastAscValidate_(trialsData, candidates, {
       scope: scope,
-      resolvedScopeOptions: resolvedScopeOptions
+      resolvedScopeOptions: resolvedScopeOptions,
+      executionOptions: executionOptions,
+      resolverCache: resolverCache
     });
+    fastSelection.dedupeSummary = dedupeSummary;
+    return fastSelection;
   }
 
   const validatedCandidates = buildValidatedBenchmarkTrialsWritebackCandidatesForDefaultScope_(candidates);
-  const strictScope = resolveBenchmarkTrialsWritebackScope_(validatedCandidates, resolvedScopeOptions);
+  const strictScope = resolveBenchmarkTrialsWritebackScope_(validatedCandidates, {
+    comparisonGroupKey: resolvedScopeOptions.comparisonGroupKey,
+    scopeSelectionSource: resolvedScopeOptions.scopeSelectionSource,
+    enforceStrictComparisonGroup: true
+  });
   // Automatic green-button writeback intentionally evaluates the entire scoped candidate set
   // (which may span multiple campaigns) after comparison-group scoping has been resolved.
   const bestCandidate = pickBestBenchmarkTrialsWritebackCandidate_(strictScope.scopedCandidates);
-  const loadedArtifact = bestCandidate._loadedArtifactForWriteback || loadAndValidateBenchmarkRunArtifactForWriteback_(bestCandidate);
+  const loadedArtifact = bestCandidate._loadedArtifactForWriteback || loadAndValidateBenchmarkRunArtifactForWritebackWithMode_(bestCandidate, {
+    validationMode: 'STRICT_AUDIT',
+    selectionStrategy: 'STRICT_FULL_SCAN',
+    resolverCache: resolverCache
+  });
 
   return {
     ok: true,
@@ -2418,6 +2824,7 @@ function selectBestBenchmarkTrialsWinnerForWriteback_(scopeOptions) {
     campaignFolderName: trimmedStringOrBlank_(bestCandidate.CampaignFolderName),
     selectionScopeDescription: 'BEST_OF_ALL_SCOPED_VALID_ROWS',
     selectionStrategy: 'STRICT_FULL_SCAN',
+    dedupeSummary: dedupeSummary,
     candidateRow: bestCandidate,
     loadedArtifact: loadedArtifact,
     transportResult: loadedArtifact.transportResult
@@ -2477,7 +2884,10 @@ function buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, includeTr
       scorerFingerprintVersion: transportResult.scorerFingerprintVersion || null,
       scorerSource: transportResult.scorerSource || null,
       allocationDayCount: Array.isArray(bestAllocation.days) ? bestAllocation.days.length : null
-    }
+    },
+    dedupeSummary: selection.dedupeSummary || null,
+    failureSummary: selection.failureSummary || null,
+    maxAttempts: isFiniteNumberValue_(selection.maxAttempts) ? Number(selection.maxAttempts) : null
   };
 
   if (includeTransportResult === true) {
@@ -2728,6 +3138,16 @@ function runWriteBenchmarkRunIdToSheet(runId) {
 
 function debugInspectBestBenchmarkTrialsWinnerForWriteback() {
   const selection = selectBestBenchmarkTrialsWinnerForWriteback_();
+  const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false);
+  Logger.log(JSON.stringify(payload, null, 2));
+  return payload;
+}
+
+function debugInspectBestBenchmarkTrialsWinnerForWritebackStrictAudit() {
+  const selection = selectBestBenchmarkTrialsWinnerForWriteback_({
+    selectionStrategy: 'STRICT_FULL_SCAN',
+    validationMode: 'STRICT_AUDIT'
+  });
   const payload = buildBestBenchmarkTrialsWinnerWritebackLogPayload_(selection, false);
   Logger.log(JSON.stringify(payload, null, 2));
   return payload;
