@@ -895,97 +895,103 @@ function maybeAutoApplyOperationalBestWinner_(options) {
 }
 
 function maybeAdvanceBenchmarkCampaignChainOnComplete_(state) {
-  const chainState = getBenchmarkCampaignChainState_();
-  if (!chainState || chainState.active !== true) {
-    clearBenchmarkCampaignChainState_();
-    return { ok: true, advanced: false };
-  }
-  const segmentTargets = Array.isArray(chainState.segmentTargets) ? chainState.segmentTargets.slice() : [];
-  const totalSegments = Number(chainState.totalSegments || segmentTargets.length || 0);
-  const currentIndex = Number(chainState.currentSegmentIndex || 0);
-  const nextIndex = currentIndex + 1;
-
-  if (nextIndex >= totalSegments || nextIndex >= segmentTargets.length) {
-    clearBenchmarkCampaignChainState_();
-    return { ok: true, advanced: false };
-  }
-
-  const snapshot = chainState.snapshot || {};
-  const snapshotFileId = normalizeBenchmarkOrchestrationString_(snapshot.fileId);
-  if (!snapshotFileId) {
-    throw new Error('Chain snapshot fileId is missing; cannot continue next cycle.');
-  }
-
-  const snapshotExportLike = {
-    ok: true,
-    contractVersion: snapshot.contractVersion || null,
-    export: {
-      fileId: snapshotFileId,
-      fileName: snapshot.fileName || null,
-      exportedAtIso: snapshot.exportedAtIso || null
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const chainState = getBenchmarkCampaignChainState_();
+    if (!chainState || chainState.active !== true) {
+      clearBenchmarkCampaignChainState_();
+      return { ok: true, advanced: false };
     }
-  };
-  const uiState = readBenchmarkUiControlState_();
-  const segmentTarget = Number(segmentTargets[nextIndex]);
-  const chainProgressText = buildBenchmarkCampaignChainProgressText_(nextIndex, totalSegments);
-  const segmentBaseSeed = computeBenchmarkCampaignSegmentSeed_(chainState.baseSeed, nextIndex);
-  const campaignBatchLabel = normalizeBenchmarkOrchestrationString_(chainState.campaignBatchLabel) ||
-    buildBenchmarkCampaignBatchLabelFromUi_(chainState.requestedTargetMaxTrialCount || uiState.targetMaxTrialCount);
+    const segmentTargets = Array.isArray(chainState.segmentTargets) ? chainState.segmentTargets.slice() : [];
+    const totalSegments = Number(chainState.totalSegments || segmentTargets.length || 0);
+    const currentIndex = Number(chainState.currentSegmentIndex || 0);
+    const nextIndex = currentIndex + 1;
 
-  const segmentStart = startBenchmarkCampaignSegment_({
-    snapshotExport: snapshotExportLike,
-    uiState: uiState,
-    segmentTargetMaxTrialCount: segmentTarget,
-    requestedTargetMaxTrialCount: chainState.requestedTargetMaxTrialCount || uiState.targetMaxTrialCount,
-    baseSeed: segmentBaseSeed,
-    campaignBatchLabel: campaignBatchLabel,
-    chainProgressText: chainProgressText
-  });
+    if (nextIndex >= totalSegments || nextIndex >= segmentTargets.length) {
+      clearBenchmarkCampaignChainState_();
+      return { ok: true, advanced: false };
+    }
 
-  const started = segmentStart.started;
-  chainState.currentSegmentIndex = nextIndex;
-  chainState.lastAdvancedAtIso = new Date().toISOString();
-  setBenchmarkCampaignChainState_(chainState);
+    const snapshot = chainState.snapshot || {};
+    const snapshotFileId = normalizeBenchmarkOrchestrationString_(snapshot.fileId);
+    if (!snapshotFileId) {
+      throw new Error('Chain snapshot fileId is missing; cannot continue next cycle.');
+    }
 
-  const compact = {
-    ok: true,
-    campaignId: started.campaignId || '',
-    campaignFolderName: started.campaignFolderName || '',
-    status: started.status || 'RUNNING',
-    backendStatus: started.status || 'RUNNING',
-    completedRunCount: started.completedRunCount,
-    plannedRunCount: started.plannedRunCount,
-    currentBestRunId: started.currentBestRunId || '',
-    currentBestScore: started.currentBestScore,
-    errorMessage: '',
-    statusSource: 'ORCHESTRATOR_RUNTIME',
-    freshness: 'FRESH',
-    reconciliationState: 'PENDING',
-    warning: '',
-    lastBackendConfirmedAt: '',
-    importOk: true,
-    importMessage: '',
-    autoApplyOk: true,
-    autoApplyApplied: false,
-    autoApplyMessage: '',
-    chainProgressText: chainProgressText,
-    segmentIndex: nextIndex + 1,
-    segmentTotal: totalSegments
-  };
-  Logger.log(JSON.stringify({
-    ok: true,
-    stage: 'campaign_chain_advanced',
-    fromSegmentIndex: currentIndex + 1,
-    toSegmentIndex: nextIndex + 1,
-    totalSegments: totalSegments,
-    campaignId: compact.campaignId,
-    campaignFolderName: compact.campaignFolderName
-  }, null, 2));
-  return {
-    ok: true,
-    advanced: true,
-    compact: compact
-  };
+    const snapshotExportLike = {
+      ok: true,
+      contractVersion: snapshot.contractVersion || null,
+      export: {
+        fileId: snapshotFileId,
+        fileName: snapshot.fileName || null,
+        exportedAtIso: snapshot.exportedAtIso || null
+      }
+    };
+    const uiState = readBenchmarkUiControlState_();
+    const segmentTarget = Number(segmentTargets[nextIndex]);
+    const chainProgressText = buildBenchmarkCampaignChainProgressText_(nextIndex, totalSegments);
+    const segmentBaseSeed = computeBenchmarkCampaignSegmentSeed_(chainState.baseSeed, nextIndex);
+    const campaignBatchLabel = normalizeBenchmarkOrchestrationString_(chainState.campaignBatchLabel) ||
+      buildBenchmarkCampaignBatchLabelFromUi_(chainState.requestedTargetMaxTrialCount || uiState.targetMaxTrialCount);
+
+    const segmentStart = startBenchmarkCampaignSegment_({
+      snapshotExport: snapshotExportLike,
+      uiState: uiState,
+      segmentTargetMaxTrialCount: segmentTarget,
+      requestedTargetMaxTrialCount: chainState.requestedTargetMaxTrialCount || uiState.targetMaxTrialCount,
+      baseSeed: segmentBaseSeed,
+      campaignBatchLabel: campaignBatchLabel,
+      chainProgressText: chainProgressText
+    });
+
+    const started = segmentStart.started;
+    chainState.currentSegmentIndex = nextIndex;
+    chainState.lastAdvancedAtIso = new Date().toISOString();
+    setBenchmarkCampaignChainState_(chainState);
+
+    const compact = {
+      ok: true,
+      campaignId: started.campaignId || '',
+      campaignFolderName: started.campaignFolderName || '',
+      status: started.status || 'RUNNING',
+      backendStatus: started.status || 'RUNNING',
+      completedRunCount: started.completedRunCount,
+      plannedRunCount: started.plannedRunCount,
+      currentBestRunId: started.currentBestRunId || '',
+      currentBestScore: started.currentBestScore,
+      errorMessage: '',
+      statusSource: 'ORCHESTRATOR_RUNTIME',
+      freshness: 'FRESH',
+      reconciliationState: 'PENDING',
+      warning: '',
+      lastBackendConfirmedAt: '',
+      importOk: true,
+      importMessage: '',
+      autoApplyOk: true,
+      autoApplyApplied: false,
+      autoApplyMessage: '',
+      chainProgressText: chainProgressText,
+      segmentIndex: nextIndex + 1,
+      segmentTotal: totalSegments
+    };
+    Logger.log(JSON.stringify({
+      ok: true,
+      stage: 'campaign_chain_advanced',
+      fromSegmentIndex: currentIndex + 1,
+      toSegmentIndex: nextIndex + 1,
+      totalSegments: totalSegments,
+      campaignId: compact.campaignId,
+      campaignFolderName: compact.campaignFolderName
+    }, null, 2));
+    return {
+      ok: true,
+      advanced: true,
+      compact: compact
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function startBenchmarkCampaignFromUi_() {
