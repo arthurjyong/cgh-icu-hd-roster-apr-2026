@@ -35,24 +35,34 @@ function getCrPrefillCallSlotOrder_() {
   return ["MICU_CALL", "MHD_CALL"];
 }
 
+function getGuaranteedCrPerDoctorCap_() {
+  return 2;
+}
+
 function hasCrPreferenceCandidate_(candidate) {
   return !!(candidate && candidate.crPreferenceApplies === true);
 }
 
-function buildCrEligibleCandidatesForSlot_(candidates, slotKey, allocationState, doctorHasGuaranteedCr) {
-  if (!candidates || candidates.length === 0) return [];
+function canCandidateTakeGuaranteedCr_(candidate, doctorGuaranteedCrCounts, guaranteedCrCap) {
+  if (!hasCrPreferenceCandidate_(candidate)) {
+    return false;
+  }
 
-  const guaranteedMap = doctorHasGuaranteedCr || {};
+  const guaranteedCounts = doctorGuaranteedCrCounts || {};
+  const doctorId = candidate && candidate.doctorId;
+  const currentCount = doctorId ? (guaranteedCounts[doctorId] || 0) : 0;
+
+  return currentCount < guaranteedCrCap;
+}
+
+function buildCrEligibleCandidatesForSlot_(candidates, slotKey, allocationState, doctorGuaranteedCrCounts, guaranteedCrCap) {
+  if (!candidates || candidates.length === 0) return [];
   const eligible = [];
 
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
 
-    if (!hasCrPreferenceCandidate_(candidate)) {
-      continue;
-    }
-
-    if (guaranteedMap[candidate.doctorId] === true) {
+    if (!canCandidateTakeGuaranteedCr_(candidate, doctorGuaranteedCrCounts, guaranteedCrCap)) {
       continue;
     }
 
@@ -72,7 +82,7 @@ function pickRandomCandidateFromList_(candidates, rng) {
   return shuffled[0] || null;
 }
 
-function tryAssignCrPrefillForSlot_(slotKey, dailyPools, allocationState, assignments, doctorHasGuaranteedCr, rng) {
+function tryAssignCrPrefillForSlot_(slotKey, dailyPools, allocationState, assignments, doctorGuaranteedCrCounts, guaranteedCrCap, rng) {
   const existing = assignments[slotKey];
   if (existing) {
     return existing;
@@ -83,7 +93,8 @@ function tryAssignCrPrefillForSlot_(slotKey, dailyPools, allocationState, assign
     candidates,
     slotKey,
     allocationState,
-    doctorHasGuaranteedCr
+    doctorGuaranteedCrCounts,
+    guaranteedCrCap
   );
   const picked = pickRandomCandidateFromList_(eligible, rng);
 
@@ -97,7 +108,7 @@ function tryAssignCrPrefillForSlot_(slotKey, dailyPools, allocationState, assign
   return picked;
 }
 
-function applyCrPrefillForDay_(dailyPools, allocationState, assignments, doctorHasGuaranteedCr, rng) {
+function applyCrPrefillForDay_(dailyPools, allocationState, assignments, doctorGuaranteedCrCounts, guaranteedCrCap, rng) {
   const callSlotOrder = getCrPrefillCallSlotOrder_();
 
   for (let i = 0; i < callSlotOrder.length; i++) {
@@ -107,13 +118,14 @@ function applyCrPrefillForDay_(dailyPools, allocationState, assignments, doctorH
       dailyPools,
       allocationState,
       assignments,
-      doctorHasGuaranteedCr,
+      doctorGuaranteedCrCounts,
+      guaranteedCrCap,
       rng
     );
   }
 }
 
-function buildCallCoverageBestOptions_(dailyPools, slotKey, allocationState) {
+function buildCallCoverageBestOptions_(dailyPools, slotKey, allocationState, doctorGuaranteedCrCounts, guaranteedCrCap) {
   const candidates = dailyPools.slotPools[slotKey] || [];
   const options = [null];
 
@@ -121,6 +133,11 @@ function buildCallCoverageBestOptions_(dailyPools, slotKey, allocationState) {
     const candidate = candidates[i];
 
     if (!canAssignCandidateToSlot_(candidate, slotKey, allocationState)) {
+      continue;
+    }
+
+    if (hasCrPreferenceCandidate_(candidate)
+      && !canCandidateTakeGuaranteedCr_(candidate, doctorGuaranteedCrCounts, guaranteedCrCap)) {
       continue;
     }
 
@@ -153,12 +170,24 @@ function scoreCallCoverageCombination_(assignmentsBySlot) {
   };
 }
 
-function chooseBestCallCoverageCombination_(dailyPools, allocationState, rng) {
+function chooseBestCallCoverageCombination_(dailyPools, allocationState, doctorGuaranteedCrCounts, guaranteedCrCap, rng) {
   const callSlotOrder = getCrPrefillCallSlotOrder_();
   const micuSlotKey = callSlotOrder[0];
   const mhdSlotKey = callSlotOrder[1];
-  const micuOptions = buildCallCoverageBestOptions_(dailyPools, micuSlotKey, allocationState);
-  const mhdOptions = buildCallCoverageBestOptions_(dailyPools, mhdSlotKey, allocationState);
+  const micuOptions = buildCallCoverageBestOptions_(
+    dailyPools,
+    micuSlotKey,
+    allocationState,
+    doctorGuaranteedCrCounts,
+    guaranteedCrCap
+  );
+  const mhdOptions = buildCallCoverageBestOptions_(
+    dailyPools,
+    mhdSlotKey,
+    allocationState,
+    doctorGuaranteedCrCounts,
+    guaranteedCrCap
+  );
 
   const bestCombinations = [];
   let bestFilledCount = -1;
@@ -196,7 +225,7 @@ function chooseBestCallCoverageCombination_(dailyPools, allocationState, rng) {
   return pickRandomCandidateFromList_(bestCombinations, rng) || {};
 }
 
-function rebalanceCallSlotsForCoverage_(dailyPools, allocationState, assignments, rng) {
+function rebalanceCallSlotsForCoverage_(dailyPools, allocationState, assignments, doctorGuaranteedCrCounts, guaranteedCrCap, rng) {
   const callSlotOrder = getCrPrefillCallSlotOrder_();
 
   for (let i = 0; i < callSlotOrder.length; i++) {
@@ -208,7 +237,13 @@ function rebalanceCallSlotsForCoverage_(dailyPools, allocationState, assignments
     }
   }
 
-  const bestCombination = chooseBestCallCoverageCombination_(dailyPools, allocationState, rng);
+  const bestCombination = chooseBestCallCoverageCombination_(
+    dailyPools,
+    allocationState,
+    doctorGuaranteedCrCounts,
+    guaranteedCrCap,
+    rng
+  );
 
   for (let i = 0; i < callSlotOrder.length; i++) {
     const slotKey = callSlotOrder[i];
@@ -222,8 +257,8 @@ function rebalanceCallSlotsForCoverage_(dailyPools, allocationState, assignments
   }
 }
 
-function markGuaranteedCrDoctorsFromCallAssignments_(assignments, doctorHasGuaranteedCr) {
-  const guaranteedMap = doctorHasGuaranteedCr || {};
+function markGuaranteedCrDoctorsFromCallAssignments_(assignments, doctorGuaranteedCrCounts) {
+  const guaranteedCounts = doctorGuaranteedCrCounts || {};
   const callSlotOrder = getCrPrefillCallSlotOrder_();
 
   for (let i = 0; i < callSlotOrder.length; i++) {
@@ -233,7 +268,7 @@ function markGuaranteedCrDoctorsFromCallAssignments_(assignments, doctorHasGuara
     if (!assigned || !assigned.doctorId) continue;
     if (assigned.crPreferenceApplies !== true) continue;
 
-    guaranteedMap[assigned.doctorId] = true;
+    guaranteedCounts[assigned.doctorId] = (guaranteedCounts[assigned.doctorId] || 0) + 1;
   }
 }
 
@@ -259,7 +294,7 @@ function fillRemainingSlotsRandomForDay_(dailyPools, slotOrder, allocationState,
   }
 }
 
-function allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds, rng, doctorHasGuaranteedCr) {
+function allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds, rng, doctorGuaranteedCrCounts) {
   const slotOrder = ["MICU_CALL", "MHD_CALL", "MICU_STANDBY", "MHD_STANDBY"];
   const allocationState = {
     usedDoctorIds: {},
@@ -267,11 +302,12 @@ function allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds, rng, doctor
   };
   const assignments = {};
   const unfilledSlotKeys = [];
-  const guaranteedMap = doctorHasGuaranteedCr || {};
+  const guaranteedCounts = doctorGuaranteedCrCounts || {};
+  const guaranteedCrCap = getGuaranteedCrPerDoctorCap_();
 
-  applyCrPrefillForDay_(dailyPools, allocationState, assignments, guaranteedMap, rng);
-  rebalanceCallSlotsForCoverage_(dailyPools, allocationState, assignments, rng);
-  markGuaranteedCrDoctorsFromCallAssignments_(assignments, guaranteedMap);
+  applyCrPrefillForDay_(dailyPools, allocationState, assignments, guaranteedCounts, guaranteedCrCap, rng);
+  rebalanceCallSlotsForCoverage_(dailyPools, allocationState, assignments, guaranteedCounts, guaranteedCrCap, rng);
+  markGuaranteedCrDoctorsFromCallAssignments_(assignments, guaranteedCounts);
   fillRemainingSlotsRandomForDay_(dailyPools, slotOrder, allocationState, assignments, unfilledSlotKeys, rng);
 
   return {
@@ -310,7 +346,7 @@ function allocateAllDaysRandom_(candidatePools, rng) {
   let totalUnfilledSlotCount = 0;
   let daysWithAnyUnfilledSlots = 0;
   let previousDayCallDoctorIds = {};
-  const doctorHasGuaranteedCr = {};
+  const doctorGuaranteedCrCounts = {};
 
   for (let i = 0; i < days.length; i++) {
     const dailyPools = days[i];
@@ -318,7 +354,7 @@ function allocateAllDaysRandom_(candidatePools, rng) {
       dailyPools,
       previousDayCallDoctorIds,
       random,
-      doctorHasGuaranteedCr
+      doctorGuaranteedCrCounts
     );
 
     result.days.push(dailyAllocation);
