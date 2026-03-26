@@ -93,7 +93,6 @@ function tryAssignCrPrefillForSlot_(slotKey, dailyPools, allocationState, assign
 
   assignments[slotKey] = picked;
   allocationState.usedDoctorIds[picked.doctorId] = true;
-  doctorHasGuaranteedCr[picked.doctorId] = true;
 
   return picked;
 }
@@ -111,6 +110,130 @@ function applyCrPrefillForDay_(dailyPools, allocationState, assignments, doctorH
       doctorHasGuaranteedCr,
       rng
     );
+  }
+}
+
+function buildCallCoverageBestOptions_(dailyPools, slotKey, allocationState) {
+  const candidates = dailyPools.slotPools[slotKey] || [];
+  const options = [null];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+
+    if (!canAssignCandidateToSlot_(candidate, slotKey, allocationState)) {
+      continue;
+    }
+
+    options.push(candidate);
+  }
+
+  return options;
+}
+
+function scoreCallCoverageCombination_(assignmentsBySlot) {
+  const callSlotOrder = getCrPrefillCallSlotOrder_();
+  let filledCount = 0;
+  let crCount = 0;
+
+  for (let i = 0; i < callSlotOrder.length; i++) {
+    const slotKey = callSlotOrder[i];
+    const assigned = assignmentsBySlot[slotKey];
+
+    if (!assigned) continue;
+    filledCount += 1;
+
+    if (assigned.crPreferenceApplies === true) {
+      crCount += 1;
+    }
+  }
+
+  return {
+    filledCount: filledCount,
+    crCount: crCount
+  };
+}
+
+function chooseBestCallCoverageCombination_(dailyPools, allocationState, rng) {
+  const callSlotOrder = getCrPrefillCallSlotOrder_();
+  const micuSlotKey = callSlotOrder[0];
+  const mhdSlotKey = callSlotOrder[1];
+  const micuOptions = buildCallCoverageBestOptions_(dailyPools, micuSlotKey, allocationState);
+  const mhdOptions = buildCallCoverageBestOptions_(dailyPools, mhdSlotKey, allocationState);
+
+  const bestCombinations = [];
+  let bestFilledCount = -1;
+  let bestCrCount = -1;
+
+  for (let i = 0; i < micuOptions.length; i++) {
+    const micuCandidate = micuOptions[i];
+
+    for (let j = 0; j < mhdOptions.length; j++) {
+      const mhdCandidate = mhdOptions[j];
+
+      if (micuCandidate && mhdCandidate && micuCandidate.doctorId === mhdCandidate.doctorId) {
+        continue;
+      }
+
+      const combo = {};
+      combo[micuSlotKey] = micuCandidate || null;
+      combo[mhdSlotKey] = mhdCandidate || null;
+
+      const score = scoreCallCoverageCombination_(combo);
+      const isBetter = score.filledCount > bestFilledCount
+        || (score.filledCount === bestFilledCount && score.crCount > bestCrCount);
+
+      if (isBetter) {
+        bestFilledCount = score.filledCount;
+        bestCrCount = score.crCount;
+        bestCombinations.length = 0;
+        bestCombinations.push(combo);
+      } else if (score.filledCount === bestFilledCount && score.crCount === bestCrCount) {
+        bestCombinations.push(combo);
+      }
+    }
+  }
+
+  return pickRandomCandidateFromList_(bestCombinations, rng) || {};
+}
+
+function rebalanceCallSlotsForCoverage_(dailyPools, allocationState, assignments, rng) {
+  const callSlotOrder = getCrPrefillCallSlotOrder_();
+
+  for (let i = 0; i < callSlotOrder.length; i++) {
+    const slotKey = callSlotOrder[i];
+    const assigned = assignments[slotKey];
+
+    if (assigned && assigned.doctorId) {
+      delete allocationState.usedDoctorIds[assigned.doctorId];
+    }
+  }
+
+  const bestCombination = chooseBestCallCoverageCombination_(dailyPools, allocationState, rng);
+
+  for (let i = 0; i < callSlotOrder.length; i++) {
+    const slotKey = callSlotOrder[i];
+    const assigned = bestCombination[slotKey] || null;
+
+    assignments[slotKey] = assigned;
+
+    if (assigned && assigned.doctorId) {
+      allocationState.usedDoctorIds[assigned.doctorId] = true;
+    }
+  }
+}
+
+function markGuaranteedCrDoctorsFromCallAssignments_(assignments, doctorHasGuaranteedCr) {
+  const guaranteedMap = doctorHasGuaranteedCr || {};
+  const callSlotOrder = getCrPrefillCallSlotOrder_();
+
+  for (let i = 0; i < callSlotOrder.length; i++) {
+    const slotKey = callSlotOrder[i];
+    const assigned = assignments[slotKey];
+
+    if (!assigned || !assigned.doctorId) continue;
+    if (assigned.crPreferenceApplies !== true) continue;
+
+    guaranteedMap[assigned.doctorId] = true;
   }
 }
 
@@ -147,6 +270,8 @@ function allocateOneDayRandom_(dailyPools, previousDayCallDoctorIds, rng, doctor
   const guaranteedMap = doctorHasGuaranteedCr || {};
 
   applyCrPrefillForDay_(dailyPools, allocationState, assignments, guaranteedMap, rng);
+  rebalanceCallSlotsForCoverage_(dailyPools, allocationState, assignments, rng);
+  markGuaranteedCrDoctorsFromCallAssignments_(assignments, guaranteedMap);
   fillRemainingSlotsRandomForDay_(dailyPools, slotOrder, allocationState, assignments, unfilledSlotKeys, rng);
 
   return {
