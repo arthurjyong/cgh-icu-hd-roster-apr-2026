@@ -21,6 +21,7 @@ function getBenchmarkUiConfig_() {
       specificRunId: 'BENCHMARK_UI_SPECIFIC_RUN_ID',
       defaultWritebackComparisonGroupKey: 'BENCHMARK_UI_DEFAULT_WRITEBACK_COMPARISON_GROUP_KEY',
       campaignSeed: 'BENCHMARK_UI_CAMPAIGN_SEED',
+      chainProgressText: 'BENCHMARK_UI_CHAIN_PROGRESS_TEXT',
       lastAppliedBestScore: 'BENCHMARK_UI_LAST_APPLIED_BEST_SCORE',
       lastAppliedRunId: 'BENCHMARK_UI_LAST_APPLIED_RUN_ID',
       lastAppliedCampaignFolder: 'BENCHMARK_UI_LAST_APPLIED_CAMPAIGN_FOLDER',
@@ -45,6 +46,7 @@ function getBenchmarkUiConfig_() {
       specificRunId: 'O12',
       defaultWritebackComparisonGroupKey: 'O11',
       campaignSeed: 'O13',
+      chainProgressText: 'C32',
       lastAppliedBestScore: 'B35',
       lastAppliedRunId: 'B36',
       lastAppliedCampaignFolder: 'B37',
@@ -403,6 +405,10 @@ function writeBenchmarkUiCampaignProgress_(statusPayload) {
     writeBenchmarkUiControlValue_('campaignSeed', normalizeBenchmarkUiString_(payload.campaignSeed));
   }
 
+  if (Object.prototype.hasOwnProperty.call(payload, 'chainProgressText')) {
+    writeBenchmarkUiControlValue_('chainProgressText', normalizeBenchmarkUiString_(payload.chainProgressText));
+  }
+
   writeBenchmarkUiLastUpdated_(new Date());
 }
 
@@ -413,6 +419,7 @@ function clearBenchmarkUiCampaignProgress_() {
   writeBenchmarkUiControlValue_('bestRunId', '');
   writeBenchmarkUiControlValue_('bestScore', '');
   writeBenchmarkUiControlValue_('campaignSeed', '');
+  writeBenchmarkUiControlValue_('chainProgressText', '');
   writeBenchmarkUiControlValue_('statusSource', '');
   writeBenchmarkUiControlValue_('freshness', '');
   writeBenchmarkUiControlValue_('reconciliationState', '');
@@ -467,6 +474,7 @@ function initializeBenchmarkUiControls_() {
 
   const campaignSeedRange = resolveBenchmarkUiControlRange_('campaignSeed');
   campaignSeedRange.setNumberFormat('@');
+  resolveBenchmarkUiControlRange_('chainProgressText').setNumberFormat('@');
   resolveBenchmarkUiControlRange_('statusSource').setNumberFormat('@');
   resolveBenchmarkUiControlRange_('freshness').setNumberFormat('@');
   resolveBenchmarkUiControlRange_('reconciliationState').setNumberFormat('@');
